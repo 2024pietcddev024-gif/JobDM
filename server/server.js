@@ -22,6 +22,10 @@ import interviewRoutes from './routes/interviews.js';
 app.use('/api/auth', authRoutes);
 app.use('/api/interviews', interviewRoutes);
 
-app.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
-});
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => {
+    console.log(`Server listening on port ${PORT}`);
+  });
+}
+
+export default app;
