@@ -8,6 +8,8 @@ CREATE TABLE users (
     target_role VARCHAR(50) DEFAULT 'Backend Developer',
     target_level VARCHAR(20) DEFAULT 'Intermediate',
     streak_days INT DEFAULT 0,
+    preferred_coding_language VARCHAR(50),
+    practice_languages JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -33,6 +35,7 @@ CREATE TABLE interview_sessions (
     overall_score DECIMAL(3, 1),
     duration_minutes INT,
     summary TEXT,
+    coding_language VARCHAR(50),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -71,6 +74,17 @@ CREATE TABLE scores (
     strengths JSONB,
     improvements JSONB,
     detailed_feedback TEXT,
+    detailed_feedback TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE coding_attempts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    problem_id VARCHAR(100) NOT NULL,
+    language VARCHAR(50) NOT NULL,
+    code_content TEXT,
+    status VARCHAR(20),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 

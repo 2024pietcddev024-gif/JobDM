@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AuthProvider } from './context/AuthContext';
 import { InterviewProvider } from './context/InterviewContext';
+import { AptitudeProvider } from './context/AptitudeContext';
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import AuthModal from './components/AuthModal';
@@ -13,6 +14,10 @@ import History from './pages/History';
 import CodingSandbox from './pages/CodingSandbox';
 import Leaderboard from './pages/Leaderboard';
 import Profile from './pages/Profile';
+import Aptitude from './pages/Aptitude';
+import AptitudeSetup from './pages/AptitudeSetup';
+import AptitudeQuiz from './pages/AptitudeQuiz';
+import AptitudeResult from './pages/AptitudeResult';
 
 export function AppContent() {
   const [currentPage, setCurrentPage] = useState('dashboard');
@@ -39,6 +44,14 @@ export function AppContent() {
         return <History onNavigate={handleNavigate} onSelectSessionReport={setSelectedReportSession} />;
       case 'coding-sandbox':
         return <CodingSandbox />;
+      case 'aptitude':
+        return <Aptitude onNavigate={handleNavigate} />;
+      case 'aptitude-setup':
+        return <AptitudeSetup onNavigate={handleNavigate} />;
+      case 'aptitude-quiz':
+        return <AptitudeQuiz onNavigate={handleNavigate} />;
+      case 'aptitude-result':
+        return <AptitudeResult onNavigate={handleNavigate} />;
       case 'leaderboard':
         return <Leaderboard />;
       case 'profile':
@@ -78,7 +91,9 @@ export default function App() {
   return (
     <AuthProvider>
       <InterviewProvider>
-        <AppContent />
+        <AptitudeProvider>
+          <AppContent />
+        </AptitudeProvider>
       </InterviewProvider>
     </AuthProvider>
   );

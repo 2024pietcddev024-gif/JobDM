@@ -1,7 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import ResumeUploader from '../components/ResumeUploader';
-import { User, Mail, Briefcase, Award, Flame, Save, CheckCircle, AlertCircle, Lock, Eye, EyeOff } from 'lucide-react';
+import { User, Mail, Briefcase, Award, Flame, Save, CheckCircle, AlertCircle, Lock, Eye, EyeOff, Code } from 'lucide-react';
+
+const PROGRAMMING_LANGUAGES = [
+  { id: 'python', name: 'Python' },
+  { id: 'java', name: 'Java' },
+  { id: 'cpp', name: 'C++' },
+  { id: 'javascript', name: 'JavaScript' },
+  { id: 'typescript', name: 'TypeScript' },
+  { id: 'csharp', name: 'C#' },
+  { id: 'go', name: 'Go' },
+  { id: 'rust', name: 'Rust' },
+  { id: 'kotlin', name: 'Kotlin' },
+  { id: 'php', name: 'PHP' },
+  { id: 'swift', name: 'Swift' },
+  { id: 'sql', name: 'SQL' }
+];
 
 export default function Profile() {
   const { user, updateUserProfile, updateResumeData } = useAuth();
@@ -11,6 +26,8 @@ export default function Profile() {
   const [email] = useState(user?.email || '');
   const [targetRole, setTargetRole] = useState(user?.targetRole || user?.target_role || 'Backend Developer');
   const [targetLevel, setTargetLevel] = useState(user?.targetLevel || user?.target_level || 'Intermediate');
+  const [preferredCodingLanguage, setPreferredCodingLanguage] = useState(user?.preferredCodingLanguage || 'Python');
+  const [practiceLanguages, setPracticeLanguages] = useState(user?.practiceLanguages || []);
 
   // Password change
   const [currentPassword, setCurrentPassword] = useState('');
@@ -28,6 +45,8 @@ export default function Profile() {
       setName(user.name || user.full_name || '');
       setTargetRole(user.targetRole || user.target_role || 'Backend Developer');
       setTargetLevel(user.targetLevel || user.target_level || 'Intermediate');
+      setPreferredCodingLanguage(user.preferredCodingLanguage || 'Python');
+      setPracticeLanguages(user.practiceLanguages || []);
     }
   }, [user]);
 
@@ -60,6 +79,8 @@ export default function Profile() {
       target_role: targetRole,
       targetLevel,
       target_level: targetLevel,
+      preferred_coding_language: preferredCodingLanguage,
+      practice_languages: practiceLanguages
     };
 
     if (newPassword && currentPassword) {
@@ -204,6 +225,52 @@ export default function Profile() {
                 <option value="Intermediate" className="bg-slate-900">Intermediate (3-5 YOE)</option>
                 <option value="Advanced" className="bg-slate-900">Advanced (6+ YOE)</option>
               </select>
+            </div>
+            
+            {/* Preferred Coding Language */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">
+                Preferred Interview Language
+              </label>
+              <select
+                value={preferredCodingLanguage}
+                onChange={(e) => setPreferredCodingLanguage(e.target.value)}
+                className="w-full px-4 py-2.5 rounded-xl glass-input text-xs text-white"
+              >
+                {PROGRAMMING_LANGUAGES.map(lang => (
+                  <option key={lang.id} value={lang.name} className="bg-slate-900">{lang.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          
+          {/* Interested Practice Languages */}
+          <div className="border-t border-white/10 pt-5 space-y-4">
+            <h4 className="text-sm font-bold text-white flex items-center gap-2">
+              <Code className="w-4 h-4 text-indigo-400" /> Interested Practice Languages
+            </h4>
+            <p className="text-xs text-slate-400">Select multiple languages you want to practice coding in.</p>
+            <div className="flex flex-wrap gap-3">
+              {PROGRAMMING_LANGUAGES.map(lang => {
+                const isSelected = practiceLanguages.includes(lang.name);
+                return (
+                  <label key={lang.id} className="flex items-center gap-2 cursor-pointer">
+                    <input 
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setPracticeLanguages([...practiceLanguages, lang.name]);
+                        } else {
+                          setPracticeLanguages(practiceLanguages.filter(l => l !== lang.name));
+                        }
+                      }}
+                      className="rounded bg-slate-900 border-white/20 text-indigo-500 focus:ring-indigo-500 focus:ring-2"
+                    />
+                    <span className="text-sm text-slate-300">{lang.name}</span>
+                  </label>
+                )
+              })}
             </div>
           </div>
 

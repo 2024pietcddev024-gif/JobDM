@@ -1,7 +1,7 @@
 import express from 'express';
 import db from '../db.js';
 import { authenticateToken } from './auth.js';
-import { generateQuestion, evaluateAnswer } from '../services/aiEngine.js';
+import { generateQuestion, evaluateAnswer, evaluateCode, analyzeResume } from '../services/aiEngine.js';
 
 const router = express.Router();
 
@@ -11,22 +11,39 @@ function safeJson(val) {
   return val;
 }
 
-// POST /api/interviews/start
-router.post('/start', authenticateToken, async (req, res) => {
-  const { category, role, difficulty, mode, resumeData, totalQuestions = 10 } = req.body;
-  if (!category || !difficulty) return res.status(400).json({ error: 'Category and difficulty are required' });
+// POST /api/interviews/analyze-resume
+router.post('/analyze-resume', authenticateToken, async (req, res) => {
+  const { fileData, mimeType, fileName } = req.body;
+  if (!fileData) return res.status(400).json({ error: 'fileData is required' });
 
   try {
-    const qData = await generateQuestion({ category, role, difficulty, resumeData, pastQA: [], questionIndex: 0 });
+    const analysis = await analyzeResume(fileData, mimeType);
+    
+    res.json({ success: true, analysis, fileName });
+  } catch (error) {
+    console.error('[Diagnostic] [interviews/analyze-resume] Error:', error);
+    res.status(500).json({ error: error.message || 'Failed to analyze resume' });
+  }
+});
+
+// POST /api/interviews/start
+router.post('/start', authenticateToken, async (req, res) => {
+  const { category, role, difficulty, mode, resumeData, totalQuestions = 10, codingLanguage, interviewMode } = req.body;
+  const hasResume = !!resumeData;
+  if (!category && !hasResume) return res.status(400).json({ error: 'Please upload your resume or select at least one interview category to continue.' });
+  if (!difficulty && !hasResume) return res.status(400).json({ error: 'Difficulty is required' });
+
+  try {
+    const qData = await generateQuestion({ category, role, difficulty, resumeData, codingLanguage, pastQA: [], questionIndex: 0, interviewMode });
 
     let sessionId = null;
     let questionId = null;
 
     try {
       const sessionRes = await db.query(
-        `INSERT INTO interview_sessions (user_id, category, role, difficulty, mode)
-         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-        [req.user.id, category, role || null, difficulty, mode || 'voice']
+        `INSERT INTO interview_sessions (user_id, category, role, difficulty, mode, coding_language)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+        [req.user.id, category, role || null, difficulty, mode || 'voice', codingLanguage || null]
       );
       sessionId = sessionRes.rows[0].id;
 
@@ -59,7 +76,7 @@ router.post('/start', authenticateToken, async (req, res) => {
     };
 
     res.status(201).json({
-      session: { id: sessionId, category, role, difficulty, mode: mode || 'voice', currentQuestionIndex: 0, totalQuestions },
+      session: { id: sessionId, category, role, difficulty, mode: mode || 'voice', codingLanguage: codingLanguage || null, currentQuestionIndex: 0, totalQuestions, resumeData, interviewMode },
       question
     });
   } catch (error) {
@@ -68,12 +85,54 @@ router.post('/start', authenticateToken, async (req, res) => {
   }
 });
 
+// POST /api/interviews/evaluate-code
+// Using a separate route for AI code review (or we could put it in code.js)
+router.post('/evaluate-code', authenticateToken, async (req, res) => {
+  const { problemTitle, problemDescription, language, code, testResult, inputFormat, outputFormat, constraints, examples } = req.body;
+  try {
+    const review = await evaluateCode({ problemTitle, problemDescription, language, code, testResult, inputFormat, outputFormat, constraints, examples });
+    res.json(review);
+  } catch (error) {
+    console.error('[API] /evaluate-code error:', error);
+    res.status(500).json({ error: 'Failed to generate code review' });
+  }
+});
+
 // POST /api/interviews/next-question — get next question during interview
 router.post('/next-question', authenticateToken, async (req, res) => {
-  const { sessionId, category, role, difficulty, questionIndex, askedQuestions = [] } = req.body;
+  const { sessionId, category, role, difficulty, questionIndex, codingLanguage, resumeData, interviewMode } = req.body;
+
+  let dbAskedQuestions = req.body.askedQuestions || [];
+  if (sessionId && !String(sessionId).startsWith('ephemeral')) {
+    try {
+      const qRes = await db.query(
+        `SELECT q.question_text, q.topics, a.transcript, a.code_content 
+         FROM questions q 
+         LEFT JOIN answers a ON q.id = a.question_id 
+         WHERE q.session_id = $1 ORDER BY q.id ASC`,
+        [sessionId]
+      );
+      if (qRes.rows.length > 0) {
+        dbAskedQuestions = qRes.rows.map(row => {
+          let parsedTopics = row.topics;
+          if (typeof parsedTopics === 'string') {
+            try { parsedTopics = JSON.parse(parsedTopics); } catch (e) { parsedTopics = []; }
+          }
+          return { 
+            question_text: row.question_text, 
+            topics: parsedTopics,
+            answer: row.transcript || '',
+            code: row.code_content || ''
+          };
+        });
+      }
+    } catch (dbErr) {
+      console.warn('[interviews/next-question] DB fetch error:', dbErr.message);
+    }
+  }
 
   try {
-    const qData = await generateQuestion({ category, role, difficulty, pastQA: askedQuestions, questionIndex });
+    const qData = await generateQuestion({ category, role, difficulty, codingLanguage, pastQA: dbAskedQuestions, questionIndex, resumeData, interviewMode });
 
     let questionId = `ephemeral-q-${Date.now()}`;
 
@@ -199,6 +258,55 @@ router.get('/history', authenticateToken, async (req, res) => {
     if (error.message.includes('not configured') || error.message.includes('ETIMEDOUT')) {
       return res.json({ sessions: [], warning: 'Database unavailable' });
     }
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /api/interviews/leaderboard
+router.get('/leaderboard', authenticateToken, async (req, res) => {
+  try {
+    const result = await db.query(`
+      WITH RankedUsers AS (
+        SELECT 
+          u.id AS "userId",
+          u.full_name AS "displayName",
+          ROUND((AVG(i.overall_score) * 10)::numeric, 1) AS "averageScore",
+          COUNT(i.id)::int AS "completedInterviews",
+          ROUND((MAX(i.overall_score) * 10)::numeric, 1) AS "bestScore",
+          MAX(i.created_at) AS "latestCompletedAt"
+        FROM users u
+        JOIN interview_sessions i ON u.id = i.user_id
+        WHERE i.overall_score IS NOT NULL
+        GROUP BY u.id, u.full_name
+      ),
+      LeaderboardWithRanks AS (
+        SELECT 
+          *,
+          RANK() OVER (
+            ORDER BY "averageScore" DESC, "completedInterviews" DESC, "bestScore" DESC, "latestCompletedAt" DESC
+          ) as "rank"
+        FROM RankedUsers
+      )
+      SELECT * FROM LeaderboardWithRanks
+      ORDER BY "rank" ASC
+    `);
+    
+    const allRanks = result.rows.map(row => ({
+      ...row,
+      rank: parseInt(row.rank),
+      averageScore: parseFloat(row.averageScore),
+      bestScore: parseFloat(row.bestScore)
+    }));
+    
+    const top20 = allRanks.slice(0, 20);
+    const userRank = allRanks.find(r => r.userId === req.user.id);
+    
+    res.json({ 
+      leaderboard: top20,
+      userRank: userRank || null
+    });
+  } catch (error) {
+    console.error('[interviews/leaderboard] Error:', error.message);
     res.status(500).json({ error: 'Server error' });
   }
 });

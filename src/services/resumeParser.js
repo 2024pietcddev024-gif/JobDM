@@ -2,63 +2,56 @@
  * Resume Parser Service - Extracts technical skills, projects, and education
  */
 
-const KNOWN_SKILLS = [
-  'JavaScript', 'TypeScript', 'React', 'Node.js', 'Express', 'Python', 'PyTorch',
-  'PostgreSQL', 'MongoDB', 'Redis', 'Docker', 'Kubernetes', 'AWS', 'S3', 'GraphQL',
-  'REST API', 'System Design', 'Git', 'Kafka', 'CI/CD', 'Linux', 'Tailwind', 'Next.js'
-];
-
 export async function parseResumeFile(file) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const reader = new FileReader();
 
     reader.onload = (event) => {
-      const textContent = event.target.result;
-      const parsed = extractResumeEntities(textContent, file.name);
-      resolve(parsed);
+      const dataUrl = event.target.result;
+      const base64Data = dataUrl.split(',')[1];
+      const mimeType = file.type || dataUrl.split(';')[0].split(':')[1] || 'text/plain';
+      
+      resolve({ fileData: base64Data, mimeType, fileName: file.name });
     };
 
-    // If PDF or binary text reading
-    reader.readAsText(file);
+    reader.onerror = (err) => reject(err);
+
+    reader.readAsDataURL(file);
   });
 }
 
-export function extractResumeEntities(rawText = '', fileName = 'Resume.pdf') {
-  const text = rawText.length > 10 ? rawText : `
-    Full Stack Engineer resume highlighting experience with Node.js, Express, PostgreSQL, Docker, Redis, and React.
-    Built Microservice E-Commerce API with Node.js and Redis. Created Real-time Telemetry Dashboard using WebSockets.
-  `;
+export async function parseResumeWithAI(fileData, mimeType, fileName, token) {
+  const response = await fetch('/api/interviews/analyze-resume', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    },
+    body: JSON.stringify({ fileData, mimeType, fileName })
+  });
 
-  // Find matching skills
-  const extractedSkills = KNOWN_SKILLS.filter(skill => 
-    new RegExp(`\\b${skill.replace('.', '\\.')}\\b`, 'i').test(text)
-  );
-
-  // Fallback default skills if file text was binary/unreadable
-  if (extractedSkills.length === 0) {
-    extractedSkills.push('Node.js', 'PostgreSQL', 'Docker', 'Redis', 'React', 'System Design');
+  if (!response.ok) {
+    const errText = await response.text();
+    console.error(`[Diagnostic] Backend returned ${response.status}: ${errText}`);
+    throw new Error(`Backend Error ${response.status}: ${errText}`);
   }
 
-  // Extract candidate projects
-  const extractedProjects = [
-    {
-      name: 'Microservice E-Commerce API',
-      tech: 'Node.js, Redis, Docker, Postgres',
-      desc: 'High throughput payment and inventory gateway.'
-    },
-    {
-      name: 'Real-time Telemetry Dashboard',
-      tech: 'React, WebSockets, Go',
-      desc: 'Monitored live server metrics with sub-50ms latency.'
-    }
-  ];
-
-  return {
-    fileName,
-    uploadDate: new Date().toISOString().split('T')[0],
-    extractedSkills,
-    extractedProjects,
-    education: 'B.S. in Computer Science & Engineering',
-    rawSnippet: text.substring(0, 300)
-  };
+  const data = await response.json();
+  console.log(`[Diagnostic] Backend response parsed:`, data);
+  
+  if (data && data.success && data.analysis) {
+     return {
+       fileName,
+       uploadDate: new Date().toISOString().split('T')[0],
+       extractedSkills: data.analysis.skills || [],
+       extractedProjects: data.analysis.projects || [],
+       categories: data.analysis.categories || [],
+       programmingLanguages: data.analysis.programmingLanguages || [],
+       roles: data.analysis.roles || [],
+       experienceLevel: data.analysis.experienceLevel || '',
+       rawAnalysis: data.analysis
+     };
+  }
+  
+  throw new Error('Analysis missing from backend response');
 }

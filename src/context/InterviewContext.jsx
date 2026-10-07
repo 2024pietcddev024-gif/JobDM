@@ -58,9 +58,40 @@ export const InterviewProvider = ({ children }) => {
     }
   };
 
-  useEffect(() => { fetchHistory(); }, []);
+  useEffect(() => { 
+    fetchHistory(); 
+    
+    // Resume active session on refresh
+    const stored = localStorage.getItem('interviewiq_active_session');
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        if (parsed.activeSession) {
+          setActiveSession(parsed.activeSession);
+          setCurrentQuestion(parsed.currentQuestion);
+          setQuestionsHistory(parsed.questionsHistory || []);
+          setQuestionIndex(parsed.questionIndex || 0);
+          askedQuestionsRef.current = parsed.askedQuestions || [];
+        }
+      } catch (e) {
+        localStorage.removeItem('interviewiq_active_session');
+      }
+    }
+  }, []);
 
-  const startNewInterview = async ({ category, role, difficulty, resumeData, totalQuestions = 10, mode = 'voice' }) => {
+  useEffect(() => {
+    if (activeSession && !interviewComplete) {
+      localStorage.setItem('interviewiq_active_session', JSON.stringify({
+        activeSession,
+        currentQuestion,
+        questionsHistory,
+        questionIndex,
+        askedQuestions: askedQuestionsRef.current
+      }));
+    }
+  }, [activeSession, currentQuestion, questionsHistory, questionIndex, interviewComplete]);
+
+  const startNewInterview = async ({ category, role, difficulty, resumeData, totalQuestions = 10, mode = 'voice', codingLanguage, interviewMode }) => {
     const token = localStorage.getItem('interviewiq_token');
     if (!token) {
       setInterviewError('You must be logged in to start an interview.');
@@ -79,7 +110,7 @@ export const InterviewProvider = ({ children }) => {
       const res = await fetch(`${API_URL}/interviews/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ category, role, difficulty, mode, resumeData, totalQuestions })
+        body: JSON.stringify({ category, role, difficulty, mode, resumeData, totalQuestions, codingLanguage, interviewMode })
       });
 
       const data = await safeJson(res);
@@ -91,7 +122,7 @@ export const InterviewProvider = ({ children }) => {
       const q = normaliseQuestion(data.question);
       askedQuestionsRef.current = [{ question_text: q.question }];
 
-      setActiveSession({ ...data.session, totalQuestions, category, role, difficulty, mode });
+      setActiveSession({ ...data.session, totalQuestions, category, role, difficulty, mode, resumeData, interviewMode, codingLanguage });
       setCurrentQuestion(q);
       setQuestionIndex(0);
       return { success: true };
@@ -181,6 +212,9 @@ export const InterviewProvider = ({ children }) => {
           difficulty: activeSession?.difficulty,
           questionIndex: nextIndex,
           askedQuestions: askedQuestionsRef.current,
+          resumeData: activeSession?.resumeData,
+          interviewMode: activeSession?.interviewMode,
+          codingLanguage: activeSession?.codingLanguage || activeSession?.coding_language
         })
       });
 
@@ -230,6 +264,7 @@ export const InterviewProvider = ({ children }) => {
 
     setFinalReport(report);
     setInterviewComplete(true);
+    localStorage.removeItem('interviewiq_active_session');
     fetchHistory();
     return report;
   };
@@ -281,6 +316,7 @@ export const InterviewProvider = ({ children }) => {
     setActiveSession(null);
     setCurrentQuestion(null);
     setQuestionIndex(0);
+    localStorage.removeItem('interviewiq_active_session');
   };
 
   const resetInterview = () => {
@@ -292,6 +328,7 @@ export const InterviewProvider = ({ children }) => {
     setFinalReport(null);
     setInterviewError(null);
     askedQuestionsRef.current = [];
+    localStorage.removeItem('interviewiq_active_session');
   };
 
   return (

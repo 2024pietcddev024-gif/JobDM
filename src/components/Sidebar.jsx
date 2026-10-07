@@ -1,6 +1,6 @@
 import React from 'react';
 import { 
-  LayoutDashboard, PlayCircle, History, Terminal, Award, Shield, User, HelpCircle 
+  LayoutDashboard, PlayCircle, History, Terminal, Award, Shield, User, HelpCircle, Brain
 } from 'lucide-react';
 
 export default function Sidebar({ currentPage, onNavigate, isSidebarOpen }) {
@@ -9,6 +9,7 @@ export default function Sidebar({ currentPage, onNavigate, isSidebarOpen }) {
     { id: 'new-interview', label: 'Start Interview', icon: PlayCircle, badge: 'AI Live' },
     { id: 'history', label: 'Past Interviews', icon: History },
     { id: 'coding-sandbox', label: 'Coding Practice', icon: Terminal },
+    { id: 'aptitude', label: 'Aptitude', icon: Brain },
     { id: 'leaderboard', label: 'Leaderboard', icon: Award },
     { id: 'profile', label: 'My Profile', icon: User }
   ];

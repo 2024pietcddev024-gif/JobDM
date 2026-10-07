@@ -9,7 +9,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@codemirror/lang-cpp": "^6.0.3",
+    "@codemirror/lang-java": "^6.0.2",
+    "@codemirror/lang-python": "^6.2.1",
     "@google/generative-ai": "^0.24.1",
+    "@uiw/codemirror-theme-vscode": "^4.25.12",
+    "@uiw/react-codemirror": "^4.25.12",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.6",
     "dotenv": "^18.0.3",
