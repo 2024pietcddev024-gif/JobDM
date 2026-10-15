@@ -1,12 +1,12 @@
-# COMPLETE PROJECT TECHNICAL AUDIT: InterviewIQ
+# COMPLETE PROJECT TECHNICAL AUDIT: JobDM
 
 ## PART 1 — PROJECT OVERVIEW
 
 ### Simple Explanation
-InterviewIQ is an AI-powered mock interview web application. It allows candidates to practice interviews across various roles (like Frontend, Backend, Data Science) by answering dynamically generated questions. The system can evaluate the candidate's answers, voice speed, and facial expressions, and then provide a detailed score and feedback report. 
+JobDM is an AI-powered mock interview web application. It allows candidates to practice interviews across various roles (like Frontend, Backend, Data Science) by answering dynamically generated questions. The system can evaluate the candidate's answers, voice speed, and facial expressions, and then provide a detailed score and feedback report. 
 
 ### Technical Explanation
-InterviewIQ is currently implemented as a **Frontend-Only Single Page Application (SPA)** using React and Vite. Despite the README outlining a full-stack architecture with a Node.js backend, PostgreSQL database, and Redis cache, the project in its current state is entirely client-side. It utilizes React Context for state management, `localStorage` for data persistence (mocking database behavior), and direct client-to-API calls to the Gemini API for its AI features. The backend and database do not exist in the source code; they are represented only by mock data and a SQL schema file.
+JobDM is currently implemented as a **Frontend-Only Single Page Application (SPA)** using React and Vite. Despite the README outlining a full-stack architecture with a Node.js backend, PostgreSQL database, and Redis cache, the project in its current state is entirely client-side. It utilizes React Context for state management, `localStorage` for data persistence (mocking database behavior), and direct client-to-API calls to the Gemini API for its AI features. The backend and database do not exist in the source code; they are represented only by mock data and a SQL schema file.
 
 ---
 
@@ -191,7 +191,7 @@ The file `backend_schema.sql` contains a well-structured PostgreSQL schema with 
 ## PART 16 — FINAL HANDOFF SUMMARY FOR ANOTHER AI
 
 ### Project Identity
-InterviewIQ is an AI mock interview prototype built entirely in React/Vite.
+JobDM is an AI mock interview prototype built entirely in React/Vite.
 
 ### Architecture at a glance
 It is currently a **Frontend-Only SPA**. There is NO backend, NO database, and NO secure API routing. All state is mocked and stored in `localStorage`. The Gemini API is called insecurely from the browser.

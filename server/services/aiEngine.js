@@ -785,6 +785,10 @@ export async function simulateCodeExecution({ language, code, testCases, problem
     return { status: 'compilation_error', compileError: compileError || runOutput, passedCount: 0, totalCount: testCases.length, results: [] };
   }
   if (data.run && data.run.code !== 0 && !runOutput.includes('actualOutput')) {
+    const isCompileErr = runStderr.includes('error: compilation failed') || runStderr.includes('error: not a statement');
+    if (isCompileErr) {
+      return { status: 'compilation_error', compileError: runStderr || runOutput, passedCount: 0, totalCount: testCases.length, results: [] };
+    }
     return { status: 'runtime_error', runtimeError: runStderr || runOutput, passedCount: 0, totalCount: testCases.length, results: [] };
   }
 
@@ -851,7 +855,7 @@ export async function generateAptitudeQuestion({ category, difficulty, pastQA = 
       const model = genAI.getGenerativeModel({ model: modelName, temperature: 0.7 + (attempts * 0.1) });
 const warningStr = failedAttempts.length > 0 ? 'WARNING: You previously generated these questions which were REJECTED as duplicates. DO NOT generate these again:\\n' + failedAttempts.join('\\n') + '\\n\\n' : '';
 
-      const prompt = `You are the aptitude question generator for InterviewIQ.
+      const prompt = `You are the aptitude question generator for JobDM.
 Generate exactly ONE high-quality multiple-choice aptitude question.
 
 Category:
@@ -982,7 +986,7 @@ export async function generateCodingProblem({ topic, difficulty, pastQA = [] }) 
       const model = genAI.getGenerativeModel({ model: modelName, temperature: 0.7 + (attempts * 0.1) });
 const warningStr = failedAttempts.length > 0 ? 'WARNING: You previously generated these problems which were REJECTED as duplicates or malformed. DO NOT generate these again:\\n' + failedAttempts.join('\\n') + '\\n\\n' : '';
 
-      const prompt = `You are the coding problem generator for InterviewIQ.
+      const prompt = `You are the coding problem generator for JobDM.
 Generate exactly ONE high-quality coding problem.
 
 Topic:

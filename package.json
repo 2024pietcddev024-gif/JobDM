@@ -1,10 +1,10 @@
 {
-  "name": "interviewiq",
+  "name": "jobdm",
   "private": true,
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"vite\" \"npm run start --prefix server\"",
+    "dev": "concurrently -k \"vite\" \"node server/server.js\"",
     "build": "vite build",
     "preview": "vite preview"
   },

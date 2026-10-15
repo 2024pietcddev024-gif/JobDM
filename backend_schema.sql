@@ -1,4 +1,4 @@
--- PostgreSQL Database Schema for InterviewIQ Platform
+-- PostgreSQL Database Schema for JobDM Platform
 
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
