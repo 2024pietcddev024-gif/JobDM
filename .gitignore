@@ -12,23 +12,30 @@ node_modules/
 jspm_packages/
 server/node_modules/
 
-# Optional npm cache directory
+# Optional npm / cache directories
 .npm
+.cache/
+.vite/
+.parcel-cache/
+*.tsbuildinfo
+.turbo
 
 # Optional eslint cache
 .eslintcache
 
-# dotenv environment variables file
+# dotenv environment variables file (protect all secrets, allow only .env.example)
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*
+!.env.example
 
 # Build output
 dist/
 build/
 server/dist/
+
+# Vercel & Deployment
+.vercel
+.netlify
 
 # OS/Editor files
 .DS_Store
@@ -38,14 +45,51 @@ server/dist/
 .Trashes
 ehthumbs.db
 Thumbs.db
+Thumbs.db:encryptable
+desktop.ini
+$RECYCLE.BIN/
 .vscode/
 .idea/
+*.sublime-project
+*.sublime-workspace
+.gemini
 
-# Testing
-coverage/
-.nyc_output/
+# Temporary and backup files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+*.orig
+
+# Large Archive & Compression formats (prevents GitHub 100MB rejection)
+*.tar.gz
+*.tar
+*.zip
+*.rar
+*.7z
+*.tgz
+*.iso
+
 # Local Piston runtime files and backups
 data/piston/
 data/piston_backup_*/
 data/piston_volume_backup*.tar.gz
-*.tar.gz
+
+# Local database dumps and SQLite
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+dump.rdb
+
+# Media uploads and runtime temporary files
+uploads/
+tmp/
+temp/
+recordings/
+
+# Testing
+coverage/
+.nyc_output/
