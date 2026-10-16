@@ -17,7 +17,9 @@ export default function InterviewSession({ onNavigate }) {
   const { 
     activeSession, currentQuestion, isLoadingQuestion, isEvaluating,
     submitCurrentAnswer, skipCurrentQuestion, exitInterview,
-    questionIndex, interviewError, interviewComplete, finalReport
+    questionIndex, interviewError, interviewComplete, finalReport,
+    isTerminated, terminationReason, tabSwitchCount, clipboardViolationCount,
+    reportViolation
   } = useInterview();
 
   const [answerText, setAnswerText] = useState('');
@@ -30,26 +32,45 @@ export default function InterviewSession({ onNavigate }) {
   const [timerSeconds, setTimerSeconds] = useState(0);
   const [speechMetrics, setSpeechMetrics] = useState({ wordCount: 0, wpm: 0, fillerCount: 0 });
   const [submitSuccess, setSubmitSuccess] = useState(false);
-  const [tabWarning, setTabWarning] = useState(false);
-  const [tabWarningCount, setTabWarningCount] = useState(0);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
+
+  // Anti-cheating Modal States
+  const [warningModal, setWarningModal] = useState({ show: false, message: '', type: '' });
+  const [terminationModal, setTerminationModal] = useState({ show: false, message: '', type: '' });
 
   const timerSecondsRef = useRef(0);
   const hasNavigatedToReport = useRef(false);
+  const lastTabEventRef = useRef(0);
+  const lastClipboardEventRef = useRef(0);
 
-  // ─── Navigate to report when complete ────────────────────────────────────
+  // ─── Navigate to report when naturally complete (not on termination) ────────
   useEffect(() => {
-    if (interviewComplete && finalReport && !hasNavigatedToReport.current) {
+    if (interviewComplete && finalReport && !isTerminated && !hasNavigatedToReport.current) {
       hasNavigatedToReport.current = true;
       speechManager.stopListening();
       speechManager.stopSpeaking();
       setIsMicOn(false);
       setTimeout(() => onNavigate('report'), 300);
     }
-  }, [interviewComplete, finalReport, onNavigate]);
+  }, [interviewComplete, finalReport, isTerminated, onNavigate]);
+
+  // ─── If resumed or marked terminated, ensure modals are shown ─────────────
+  useEffect(() => {
+    if (isTerminated) {
+      speechManager.stopListening();
+      speechManager.stopSpeaking();
+      setIsMicOn(false);
+      setTerminationModal(prev => ({
+        show: true,
+        message: prev.message || terminationReason || 'Session terminated because the policy violation limit was reached.',
+        type: prev.type || 'POLICY_VIOLATION'
+      }));
+    }
+  }, [isTerminated, terminationReason]);
 
   // ─── Timer ────────────────────────────────────────────────────────────────
   useEffect(() => {
+    if (isTerminated) return;
     const timer = setInterval(() => {
       setTimerSeconds(prev => {
         timerSecondsRef.current = prev + 1;
@@ -57,23 +78,95 @@ export default function InterviewSession({ onNavigate }) {
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [isTerminated]);
 
-  // ─── Tab change detection ─────────────────────────────────────────────────
+  // ─── Anti-Cheating: Tab Switch & Window Focus Loss ────────────────────────
   useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.hidden && activeSession) {
-        setTabWarning(true);
-        setTabWarningCount(prev => prev + 1);
-        speechManager.stopListening();
-        setIsMicOn(false);
-        // Auto-dismiss after 5 seconds
-        setTimeout(() => setTabWarning(false), 5000);
+    const handleFocusLoss = async () => {
+      if (!activeSession || interviewComplete || isTerminated) return;
+      
+      // Deduplicate rapid focus/blur/visibilitychange events within 1.5 seconds
+      const now = Date.now();
+      if (now - lastTabEventRef.current < 1500) return;
+      lastTabEventRef.current = now;
+
+      speechManager.stopListening();
+      speechManager.stopSpeaking();
+      setIsMicOn(false);
+
+      if (reportViolation) {
+        const res = await reportViolation('TAB_SWITCH');
+        if (res?.terminated) {
+          setTerminationModal({
+            show: true,
+            type: 'TAB_SWITCH',
+            message: res.message || 'Session terminated because the tab-switch violation limit was reached.'
+          });
+        } else if (res?.warning) {
+          setWarningModal({
+            show: true,
+            type: 'TAB_SWITCH',
+            message: res.message || 'Warning 1 of 2: You left your active session. Switching tabs or leaving the session repeatedly may terminate your interview or coding practice.'
+          });
+        }
       }
     };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [activeSession]);
+
+    const handleVisibility = () => {
+      if (document.hidden) {
+        handleFocusLoss();
+      }
+    };
+
+    const handleBlur = () => {
+      handleFocusLoss();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('blur', handleBlur);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('blur', handleBlur);
+    };
+  }, [activeSession, interviewComplete, isTerminated, reportViolation]);
+
+  // ─── Anti-Cheating: Clipboard Violations on Textarea / Editor ─────────────
+  const handleClipboardViolation = useCallback(async (e) => {
+    if (isTerminated || interviewComplete || !activeSession) return;
+    if (e && e.preventDefault) e.preventDefault();
+
+    const now = Date.now();
+    if (now - lastClipboardEventRef.current < 1500) return;
+    lastClipboardEventRef.current = now;
+
+    if (reportViolation) {
+      const res = await reportViolation('CLIPBOARD_ACTION', { action: e?.type || 'paste' });
+      if (res?.terminated) {
+        speechManager.stopListening();
+        speechManager.stopSpeaking();
+        setIsMicOn(false);
+        setTerminationModal({
+          show: true,
+          type: 'CLIPBOARD_ACTION',
+          message: res.message || 'Session terminated because the prohibited clipboard action limit was reached.'
+        });
+      } else if (res?.warning) {
+        setWarningModal({
+          show: true,
+          type: 'CLIPBOARD_ACTION',
+          message: res.message || 'Warning 1 of 2: Copying, cutting, or pasting code is not allowed during this interview session. Repeated violations will end the session.'
+        });
+      }
+    }
+  }, [isTerminated, interviewComplete, activeSession, reportViolation]);
+
+  const handleTextareaKeyDown = (e) => {
+    // Intercept keyboard shortcuts for copy, cut, paste (Ctrl/Cmd + C, V, X)
+    if ((e.ctrlKey || e.metaKey) && ['c', 'v', 'x'].includes(e.key.toLowerCase())) {
+      handleClipboardViolation(e);
+    }
+  };
 
   // ─── TTS: speak question ──────────────────────────────────────────────────
   useEffect(() => {
@@ -178,11 +271,11 @@ export default function InterviewSession({ onNavigate }) {
     return (
       <div className="text-center py-20 space-y-4">
         {interviewError && (
-          <div className="max-w-md mx-auto p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-sm">
+          <div className="max-w-md mx-auto p-4 rounded-xl bg-rose-500/10 border border-indigo-300 dark:border-indigo-500/20 text-indigo-600 dark:text-indigo-400 text-sm">
             {interviewError}
           </div>
         )}
-        <p className="text-slate-400">No active interview session.</p>
+        <p className="text-slate-600 dark:text-slate-400">No active interview session.</p>
         <button onClick={() => onNavigate('new-interview')} className="px-6 py-2.5 rounded-xl glow-btn text-white font-bold text-sm">
           Start New Interview
         </button>
@@ -193,14 +286,68 @@ export default function InterviewSession({ onNavigate }) {
   return (
     <div className="space-y-4 animate-in fade-in duration-300">
 
-      {/* ─── Tab Switch Warning Banner ──────────────────────────────────────── */}
-      {tabWarning && (
-        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-top-2 duration-300">
-          <div className="flex items-center gap-3 px-5 py-3.5 rounded-2xl bg-rose-900/90 border border-rose-500/50 shadow-2xl backdrop-blur-md">
-            <AlertTriangle className="w-5 h-5 text-rose-400 flex-shrink-0" />
-            <div>
-              <p className="text-sm font-bold text-white">⚠️ Tab Switch Detected!</p>
-              <p className="text-xs text-rose-300">Switching tabs during an interview is flagged. Warning #{tabWarningCount}. Mic has been stopped.</p>
+      {/* ─── Anti-Cheating Policy Warning Modal ────────────────────────────── */}
+      {warningModal.show && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/75 dark:bg-black/75 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="rounded-3xl p-7 border border-amber-300 dark:border-amber-700/50 shadow-2xl max-w-md w-full mx-4 space-y-4 bg-white dark:bg-slate-900">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-300 dark:border-amber-500/30 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle className="w-6 h-6 text-amber-600 dark:text-amber-400" />
+              </div>
+              <div>
+                <h3 className="font-bold text-lg text-slate-900 dark:text-white">Policy Violation Warning</h3>
+                <p className="text-xs text-amber-600 dark:text-amber-400 font-semibold">Active Session Monitoring</p>
+              </div>
+            </div>
+            <p className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed font-medium">
+              {warningModal.message}
+            </p>
+            <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/40 text-xs text-amber-800 dark:text-amber-300">
+              Note: This event has been logged to your session audit trail. A second policy violation will automatically terminate your session.
+            </div>
+            <button
+              onClick={() => setWarningModal({ show: false, message: '', type: '' })}
+              className="w-full py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-sm font-bold transition-all shadow-md shadow-amber-600/20"
+            >
+              I Understand &amp; Continue
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Anti-Cheating Session Termination Modal ──────────────────────────── */}
+      {(isTerminated || terminationModal.show) && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/85 dark:bg-black/85 backdrop-blur-md animate-in fade-in duration-300">
+          <div className="rounded-3xl p-7 border border-rose-300 dark:border-rose-700/50 shadow-2xl max-w-md w-full mx-4 space-y-4 bg-white dark:bg-slate-900">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-rose-500/20 border border-rose-300 dark:border-rose-500/30 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle className="w-6 h-6 text-rose-600 dark:text-rose-400" />
+              </div>
+              <div>
+                <h3 className="font-bold text-lg text-slate-900 dark:text-white">Session Terminated</h3>
+                <p className="text-xs text-rose-600 dark:text-rose-400 font-semibold">Violation Limit Exceeded</p>
+              </div>
+            </div>
+            <p className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed font-medium">
+              {terminationModal.message || terminationReason || 'Session terminated because the violation limit was reached.'}
+            </p>
+            <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/40 text-xs text-rose-800 dark:text-rose-300 space-y-1">
+              <p className="font-bold">Session Status: Terminated for Policy Violation</p>
+              <p>Further answering and evaluation are disabled for this session. Your previously submitted answers and evaluation feedback have been preserved.</p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => onNavigate('dashboard')}
+                className="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-white/10 dark:hover:bg-white/15 text-slate-700 dark:text-slate-300 text-xs font-bold transition-all"
+              >
+                Back to Dashboard
+              </button>
+              <button
+                onClick={() => onNavigate('report')}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition-all shadow-md shadow-rose-600/20"
+              >
+                View Saved Report
+              </button>
             </div>
           </div>
         </div>
@@ -208,26 +355,26 @@ export default function InterviewSession({ onNavigate }) {
 
       {/* ─── Exit Confirmation Dialog ───────────────────────────────────────── */}
       {showExitConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md">
-          <div className="glass-card rounded-3xl p-8 border border-white/10 shadow-2xl max-w-sm w-full mx-4 space-y-5">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/75 dark:bg-black/75 backdrop-blur-md">
+          <div className="glass-card rounded-3xl p-8 border border-slate-300 dark:border-white/10 shadow-2xl max-w-sm w-full mx-4 space-y-5">
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-rose-500/20 border border-rose-500/30 flex items-center justify-center">
-                <LogOut className="w-6 h-6 text-rose-400" />
+              <div className="w-12 h-12 rounded-2xl bg-rose-500/20 border border-indigo-300 dark:border-indigo-500/20 flex items-center justify-center">
+                <LogOut className="w-6 h-6 text-indigo-600 dark:text-indigo-400" />
               </div>
               <div>
-                <h3 className="font-bold text-lg text-white">Exit Interview?</h3>
-                <p className="text-xs text-slate-400">Your progress so far will be saved.</p>
+                <h3 className="font-bold text-lg text-slate-900 dark:text-white">Exit Interview?</h3>
+                <p className="text-xs text-slate-600 dark:text-slate-400">Your progress so far will be saved.</p>
               </div>
             </div>
-            <p className="text-sm text-slate-300">
-              You've answered <strong className="text-white">{questionIndex}</strong> of <strong className="text-white">{total}</strong> questions.
+            <p className="text-sm text-slate-700 dark:text-slate-300">
+              You've answered <strong className="text-slate-900 dark:text-white">{questionIndex}</strong> of <strong className="text-slate-900 dark:text-white">{total}</strong> questions.
               Exiting now will generate a partial report.
             </p>
             <div className="flex gap-3">
-              <button onClick={() => setShowExitConfirm(false)} className="flex-1 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-sm font-semibold border border-white/10 transition-colors">
+              <button onClick={() => setShowExitConfirm(false)} className="flex-1 py-2.5 rounded-xl bg-white dark:bg-white/5 hover:bg-slate-100 dark:bg-white/10 text-slate-700 dark:text-slate-300 text-sm font-semibold border border-slate-300 dark:border-white/10 transition-colors">
                 Continue Interview
               </button>
-              <button onClick={handleExit} className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-sm font-bold transition-colors">
+              <button onClick={handleExit} className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-slate-900 dark:text-white text-sm font-bold transition-colors">
                 Exit & Save
               </button>
             </div>
@@ -236,27 +383,27 @@ export default function InterviewSession({ onNavigate }) {
       )}
 
       {/* ─── Top Session Bar ────────────────────────────────────────────────── */}
-      <div className="glass-card rounded-2xl p-4 border border-white/10 flex flex-wrap items-center justify-between gap-4">
+      <div className="rounded-2xl p-4 bg-teal-50 dark:bg-teal-900/20 border border-teal-200 dark:border-teal-500/30 flex flex-wrap items-center justify-between gap-4 shadow-sm">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+          <div className="w-10 h-10 rounded-xl bg-teal-100 dark:bg-teal-500/20 border border-teal-200 dark:border-teal-500/30 flex items-center justify-center text-teal-700 dark:text-teal-300">
             <Bot className="w-5 h-5" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="font-bold text-white text-base font-['Outfit']">{activeSession.role || activeSession.category}</h2>
-              <span className="text-[10px] font-extrabold px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300">{activeSession.difficulty}</span>
+              <h2 className="font-extrabold text-slate-900 dark:text-white text-base font-['Outfit']">{activeSession.role || activeSession.category}</h2>
+              <span className="text-[10px] font-black px-2 py-0.5 rounded bg-teal-100 dark:bg-teal-500/30 text-teal-800 dark:text-teal-200 border border-teal-200 dark:border-teal-500/30">{activeSession.difficulty}</span>
             </div>
-            <p className="text-xs text-slate-400">Question {questionIndex + 1} of {total}</p>
+            <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">Question {questionIndex + 1} of {total}</p>
           </div>
         </div>
 
         {/* Progress bar */}
         <div className="hidden sm:flex flex-1 max-w-xs flex-col gap-1">
-          <div className="flex justify-between text-[10px] text-slate-500">
+          <div className="flex justify-between text-[10px] font-bold text-slate-500">
             <span>Progress</span><span>{questionIndex}/{total}</span>
           </div>
-          <div className="w-full h-1.5 rounded-full bg-white/10">
-            <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-500"
+          <div className="w-full h-2 rounded-full bg-teal-100 dark:bg-white/10 overflow-hidden">
+            <div className="h-full rounded-full bg-gradient-to-r from-teal-500 to-indigo-500 transition-all duration-500"
               style={{ width: `${progressPct}%` }} />
           </div>
         </div>
@@ -265,28 +412,28 @@ export default function InterviewSession({ onNavigate }) {
           <VoiceVisualizer isSpeaking={isTtsSpeaking} isListening={isMicOn} />
 
           <button onClick={() => { if (isTtsSpeaking) speechManager.stopSpeaking(); setIsTtsMuted(!isTtsMuted); }}
-            className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10" title={isTtsMuted ? 'Unmute AI' : 'Mute AI'}>
-            {isTtsMuted ? <VolumeX className="w-4 h-4 text-rose-400" /> : <Volume2 className="w-4 h-4 text-indigo-400" />}
+            className="p-2 rounded-xl bg-white dark:bg-white/5 hover:bg-slate-100 dark:bg-white/10 text-slate-700 dark:text-slate-300 border border-teal-200 dark:border-white/10 shadow-xs" title={isTtsMuted ? 'Unmute AI' : 'Mute AI'}>
+            {isTtsMuted ? <VolumeX className="w-4 h-4 text-teal-600 dark:text-teal-400" /> : <Volume2 className="w-4 h-4 text-teal-600 dark:text-teal-400" />}
           </button>
 
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 border border-white/10 text-slate-300 text-xs font-mono font-bold">
-            <Clock className="w-4 h-4 text-indigo-400" />
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-teal-200 dark:border-white/10 text-teal-800 dark:text-teal-200 text-xs font-mono font-bold shadow-xs">
+            <Clock className="w-4 h-4 text-teal-600 dark:text-teal-400" />
             <span>{timeFormatted}</span>
           </div>
 
           {/* Skip Question */}
-          <button onClick={handleSkip} disabled={isLoadingQuestion || isEvaluating}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 text-xs font-bold transition-colors disabled:opacity-50"
+          <button onClick={handleSkip} disabled={isLoadingQuestion || isEvaluating || isTerminated}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-100 hover:bg-amber-200/80 dark:bg-amber-500/20 border border-amber-200 dark:border-amber-500/30 text-amber-800 dark:text-amber-200 text-xs font-bold transition-colors disabled:opacity-50 shadow-xs"
             title="Skip this question">
-            <SkipForward className="w-3.5 h-3.5" />
+            <SkipForward className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
             <span className="hidden sm:inline">Skip</span>
           </button>
 
           {/* Exit Interview */}
           <button onClick={() => setShowExitConfirm(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 text-xs font-bold transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-100 hover:bg-rose-200/80 dark:bg-rose-500/20 border border-rose-200 dark:border-rose-500/30 text-rose-800 dark:text-rose-200 text-xs font-bold transition-colors shadow-xs"
             title="Exit interview">
-            <LogOut className="w-3.5 h-3.5" />
+            <LogOut className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />
             <span className="hidden sm:inline">Exit</span>
           </button>
         </div>
@@ -297,15 +444,15 @@ export default function InterviewSession({ onNavigate }) {
         {/* Left — Question + Answer */}
         <div className="lg:col-span-2 space-y-6">
           {/* AI Question Card */}
-          <div className="glass-card rounded-3xl p-6 lg:p-8 border border-indigo-500/30 space-y-4 shadow-xl">
+          <div className="rounded-3xl p-6 lg:p-8 bg-violet-50 dark:bg-violet-900/20 border border-violet-200 dark:border-violet-500/30 space-y-4 shadow-sm">
             <div className="flex items-center justify-between flex-wrap gap-2">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-500/10 text-indigo-300 text-xs font-semibold border border-indigo-500/20">
-                <Sparkles className="w-3.5 h-3.5" /> AI Interviewer Question
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-violet-100 dark:bg-violet-500/20 text-violet-700 dark:text-violet-300 text-xs font-bold border border-violet-200 dark:border-violet-500/30">
+                <Sparkles className="w-3.5 h-3.5 text-violet-600 dark:text-violet-400" /> AI Interviewer Question
               </span>
               {currentQuestion?.topics && (
                 <div className="flex flex-wrap gap-1.5">
                   {currentQuestion.topics.slice(0, 4).map((t, i) => (
-                    <span key={i} className="text-[10px] font-medium text-slate-400 bg-white/5 px-2 py-0.5 rounded-md">{t}</span>
+                    <span key={i} className="text-[10px] font-bold text-violet-700 dark:text-violet-300 bg-white dark:bg-white/10 px-2 py-0.5 rounded-md border border-violet-200 dark:border-white/10">{t}</span>
                   ))}
                 </div>
               )}
@@ -313,13 +460,13 @@ export default function InterviewSession({ onNavigate }) {
 
             {isLoadingQuestion || isEvaluating ? (
               <div className="py-8 text-center space-y-3">
-                <Loader2 className="w-8 h-8 text-indigo-400 animate-spin mx-auto" />
-                <p className="text-xs text-slate-400">
+                <Loader2 className="w-8 h-8 text-violet-600 dark:text-violet-400 animate-spin mx-auto" />
+                <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
                   {isEvaluating ? 'Evaluating your answer...' : 'AI is generating next question...'}
                 </p>
               </div>
             ) : (
-              <h3 className="text-lg lg:text-xl font-semibold text-white leading-relaxed font-['Outfit']">
+              <h3 className="text-lg lg:text-xl font-bold text-slate-900 dark:text-white leading-relaxed font-['Outfit']">
                 "{currentQuestion?.question}"
               </h3>
             )}
@@ -327,23 +474,30 @@ export default function InterviewSession({ onNavigate }) {
 
           {/* Code Editor */}
           {(currentQuestion?.type === 'coding' || activeSession.mode === 'coding') && (
-            <CodeEditor initialCode={currentQuestion?.codingPrompt} onCodeChange={(c) => setCodeAnswer(c)} />
+            <CodeEditor 
+              initialCode={currentQuestion?.codingPrompt} 
+              onCodeChange={(c) => setCodeAnswer(c)}
+              onViolation={handleClipboardViolation}
+              isTerminated={isTerminated}
+            />
           )}
 
           {/* Answer Area */}
-          <div className="glass-card rounded-3xl p-6 border border-white/10 space-y-4">
+          <div className="rounded-3xl p-6 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-500/30 space-y-4 shadow-sm">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2">
-                <User className="w-4 h-4 text-indigo-400" />
-                <h4 className="font-bold text-white text-sm">Your Response</h4>
+                <div className="w-7 h-7 rounded-lg bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+                  <User className="w-4 h-4" />
+                </div>
+                <h4 className="font-extrabold text-slate-900 dark:text-white text-sm">Your Response</h4>
               </div>
               <button
                 onClick={() => setIsMicOn(!isMicOn)}
-                disabled={isLoadingQuestion || isEvaluating}
+                disabled={isLoadingQuestion || isEvaluating || isTerminated}
                 className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all disabled:opacity-50 ${
                   isMicOn
                     ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/30 animate-pulse'
-                    : 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-600/30'
+                    : 'bg-blue-100 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-500/30 hover:bg-blue-200/60'
                 }`}>
                 {isMicOn ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
                 <span>{isMicOn ? 'Recording... (Click to Stop)' : 'Click to Speak'}</span>
@@ -351,8 +505,8 @@ export default function InterviewSession({ onNavigate }) {
             </div>
 
             {speechError && (
-              <div className="text-rose-400 text-xs bg-rose-500/10 p-3 rounded-xl border border-rose-500/20 flex items-start gap-2">
-                <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <div className="text-rose-700 dark:text-rose-300 text-xs bg-rose-50 dark:bg-rose-900/20 p-3 rounded-xl border border-rose-200 dark:border-rose-500/30 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-rose-500" />
                 <span>{speechError}</span>
               </div>
             )}
@@ -360,20 +514,29 @@ export default function InterviewSession({ onNavigate }) {
             <textarea
               value={answerText}
               onChange={(e) => setAnswerText(e.target.value)}
-              placeholder={isMicOn ? 'Listening to your spoken answer... speak clearly.' : 'Click "Click to Speak" for voice input, or type your answer here...'}
-              className="w-full h-32 p-4 rounded-2xl glass-input text-sm text-slate-100 placeholder-slate-500 resize-none focus:outline-none"
+              onCopy={handleClipboardViolation}
+              onCut={handleClipboardViolation}
+              onPaste={handleClipboardViolation}
+              onKeyDown={handleTextareaKeyDown}
+              disabled={isEvaluating || isLoadingQuestion || isTerminated}
+              placeholder={
+                isTerminated 
+                  ? 'Session terminated due to policy violation. Answering is disabled.'
+                  : (isMicOn ? 'Listening to your spoken answer... speak clearly.' : 'Click "Click to Speak" for voice input, or type your answer here...')
+              }
+              className={`w-full h-32 p-4 rounded-2xl bg-white dark:bg-slate-900 border border-blue-200 dark:border-white/10 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 resize-none focus:outline-none focus:border-indigo-500 shadow-xs ${isTerminated ? 'opacity-60 cursor-not-allowed bg-slate-100 dark:bg-slate-800' : ''}`}
             />
 
-            <div className="flex flex-wrap items-center justify-between text-xs text-slate-400 pt-1 border-t border-white/5">
+            <div className="flex flex-wrap items-center justify-between text-xs text-slate-600 dark:text-slate-400 pt-1 border-t border-blue-200/60 dark:border-white/5">
               <div className="flex items-center gap-4">
-                <span>WPM: <strong className="text-indigo-300">{speechMetrics.wpm || 0}</strong></span>
-                <span>Words: <strong className="text-indigo-300">{speechMetrics.wordCount || 0}</strong></span>
-                <span className={speechMetrics.fillerCount > 3 ? 'text-rose-400 font-bold' : ''}>
-                  Fillers: <strong className="text-amber-400">{speechMetrics.fillerCount || 0}</strong>
+                <span>WPM: <strong className="text-blue-700 dark:text-blue-300">{speechMetrics.wpm || 0}</strong></span>
+                <span>Words: <strong className="text-blue-700 dark:text-blue-300">{speechMetrics.wordCount || 0}</strong></span>
+                <span className={speechMetrics.fillerCount > 3 ? 'text-amber-600 dark:text-amber-400 font-bold' : ''}>
+                  Fillers: <strong className={speechMetrics.fillerCount > 3 ? 'text-amber-600 dark:text-amber-400' : 'text-blue-700 dark:text-blue-300'}>{speechMetrics.fillerCount || 0}</strong>
                 </span>
               </div>
               {submitSuccess && (
-                <span className="flex items-center gap-1 text-emerald-400 font-bold">
+                <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-bold">
                   <CheckCircle className="w-3.5 h-3.5" /> Answer saved!
                 </span>
               )}
@@ -382,7 +545,7 @@ export default function InterviewSession({ onNavigate }) {
             <div className="flex justify-end pt-2">
               <button
                 onClick={handleSubmitAnswer}
-                disabled={isEvaluating || isLoadingQuestion}
+                disabled={isEvaluating || isLoadingQuestion || isTerminated}
                 className="flex items-center gap-2 px-6 py-3 rounded-xl glow-btn text-white font-extrabold text-sm shadow-xl disabled:opacity-50">
                 {isEvaluating
                   ? <><Loader2 className="w-4 h-4 animate-spin" /> Evaluating...</>
@@ -397,22 +560,35 @@ export default function InterviewSession({ onNavigate }) {
         <div className="space-y-4">
           <EmotionTracker isWebcamActive={isWebcamActive} setIsWebcamActive={setIsWebcamActive} fillerCount={speechMetrics.fillerCount} />
 
-          <div className="glass-card rounded-2xl p-5 border border-white/10 space-y-3">
-            <div className="flex items-center gap-2 text-indigo-400 font-bold text-xs">
-              <ShieldCheck className="w-4 h-4" /> Interview Best Practices
+          <div className="rounded-2xl p-5 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-500/30 space-y-3 shadow-sm">
+            <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300 font-bold text-xs">
+              <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" /> Interview Best Practices
             </div>
-            <ul className="text-xs text-slate-400 space-y-2 leading-relaxed">
-              <li className="flex items-start gap-2"><span className="text-indigo-400">•</span><span>Use the <strong>STAR method</strong> for behavioral questions.</span></li>
-              <li className="flex items-start gap-2"><span className="text-indigo-400">•</span><span>Speak at <strong>120–140 WPM</strong> — not too fast, not too slow.</span></li>
-              <li className="flex items-start gap-2"><span className="text-indigo-400">•</span><span>Mention <strong>specific numbers or outcomes</strong> when possible.</span></li>
-              <li className="flex items-start gap-2"><span className="text-indigo-400">•</span><span>Don't leave answers blank — a partial answer shows thought process.</span></li>
+            <ul className="text-xs text-slate-600 dark:text-slate-400 space-y-2 leading-relaxed font-medium">
+              <li className="flex items-start gap-2"><span className="text-emerald-600 dark:text-emerald-400 font-bold">•</span><span>Use the <strong>STAR method</strong> for behavioral questions.</span></li>
+              <li className="flex items-start gap-2"><span className="text-emerald-600 dark:text-emerald-400 font-bold">•</span><span>Speak at <strong>120–140 WPM</strong> — steady and confident.</span></li>
+              <li className="flex items-start gap-2"><span className="text-emerald-600 dark:text-emerald-400 font-bold">•</span><span>Mention <strong>concrete metrics & architectural tradeoffs</strong>.</span></li>
+              <li className="flex items-start gap-2"><span className="text-emerald-600 dark:text-emerald-400 font-bold">•</span><span>Don't leave answers blank — describe your logical approach.</span></li>
             </ul>
           </div>
 
-          {tabWarningCount > 0 && (
-            <div className="p-3 rounded-xl bg-rose-900/30 border border-rose-500/30">
-              <p className="text-xs text-rose-400 font-semibold">⚠️ {tabWarningCount} tab switch{tabWarningCount > 1 ? 'es' : ''} detected this session.</p>
-              <p className="text-xs text-slate-500 mt-0.5">Tab switching is noted in your report.</p>
+          {(tabSwitchCount > 0 || clipboardViolationCount > 0) && (
+            <div className="p-4 rounded-2xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-300/80 dark:border-amber-700/40 space-y-2">
+              <div className="flex items-center gap-2 text-xs font-bold text-amber-800 dark:text-amber-300">
+                <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                <span>Policy Violation Status</span>
+              </div>
+              <div className="text-xs text-slate-700 dark:text-slate-300 space-y-1">
+                {tabSwitchCount > 0 && (
+                  <p>Tab switches recorded: <strong className="text-amber-700 dark:text-amber-300">{tabSwitchCount} of 2</strong></p>
+                )}
+                {clipboardViolationCount > 0 && (
+                  <p>Clipboard actions recorded: <strong className="text-amber-700 dark:text-amber-300">{clipboardViolationCount} of 2</strong></p>
+                )}
+                {isTerminated && (
+                  <p className="text-rose-600 dark:text-rose-400 font-bold mt-1">Status: Session Terminated</p>
+                )}
+              </div>
             </div>
           )}
         </div>

@@ -1,0 +1,70 @@
+import express from 'express';
+import { authenticateToken, authenticateOptional } from './auth.js';
+import db from '../db.js';
+import { simulateCodeExecution } from '../services/aiEngine.js';
+
+const router = express.Router();
+
+router.post('/run', authenticateOptional, async (req, res) => {
+  const { language, code, testCases, problemTitle } = req.body;
+
+  if (!language || !code) {
+    return res.status(400).json({ error: 'Language and code are required' });
+  }
+
+  // Detect empty or placeholder code server-side for safety
+  const trimmed = code.trim();
+  const placeholders = ['pass', 'return null;', '// Write your solution here', '# Write your solution here', 'return 0;'];
+  
+  // Basic check: if it's too short or literally just the placeholder
+  if (trimmed.length < 5 || placeholders.some(p => trimmed === p)) {
+    return res.json({
+      status: 'incomplete',
+      error: 'Please implement the solution before running the test cases.'
+    });
+  }
+
+  try {
+    const result = await simulateCodeExecution({ language, code, testCases, problemTitle });
+    res.json(result);
+  } catch (error) {
+    console.error('[API] /run error:', error);
+    res.status(500).json({ error: 'Failed to execute code' });
+  }
+});
+
+router.post('/attempt', authenticateToken, async (req, res) => {
+  const { problemId, language, code, status } = req.body;
+  if (!problemId || !language) return res.status(400).json({ error: 'Missing fields' });
+
+  try {
+    await db.query(
+      `INSERT INTO coding_attempts (user_id, problem_id, language, code_content, status)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [req.user.id, problemId, language, code, status]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[code/attempt] error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.get('/progress', authenticateToken, async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT language, status, COUNT(*) as count 
+       FROM coding_attempts 
+       WHERE user_id = $1 
+       GROUP BY language, status`,
+      [req.user.id]
+    );
+    
+    res.json({ progress: result.rows });
+  } catch (err) {
+    console.error('[code/progress] error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+export default router;

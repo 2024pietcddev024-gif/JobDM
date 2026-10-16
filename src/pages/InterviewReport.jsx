@@ -10,7 +10,7 @@ import {
 function ScoreBadge({ score }) {
   const s = parseFloat(score);
   if (!score && score !== 0) return <span className="text-slate-500 font-bold">—</span>;
-  const color = s >= 8 ? 'text-emerald-400' : s >= 6 ? 'text-indigo-400' : s >= 4 ? 'text-amber-400' : 'text-rose-400';
+  const color = s >= 8 ? 'text-indigo-600 dark:text-indigo-400' : s >= 6 ? 'text-indigo-600 dark:text-indigo-400' : s >= 4 ? 'text-indigo-600 dark:text-indigo-400' : 'text-indigo-600 dark:text-indigo-400';
   return <span className={`font-bold ${color}`}>{s.toFixed(1)}</span>;
 }
 
@@ -54,7 +54,7 @@ export default function InterviewReport({ onNavigate }) {
   if (!reportData) {
     return (
       <div className="text-center py-20 space-y-4">
-        <p className="text-slate-400 text-sm">No report available yet. Complete an interview first.</p>
+        <p className="text-slate-600 dark:text-slate-400 text-sm">No report available yet. Complete an interview first.</p>
         <button onClick={() => onNavigate('new-interview')} className="px-6 py-2.5 rounded-xl glow-btn text-white font-bold text-sm">
           Start New Interview
         </button>
@@ -95,17 +95,17 @@ export default function InterviewReport({ onNavigate }) {
     : parseFloat(overallScore) >= 5.0 ? 'Needs Practice'
     : overallScore ? 'Significant Work Needed' : 'Incomplete';
 
-  const verdictColor = verdict === 'Strong Hire' ? 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10'
-    : verdict === 'Hire' ? 'text-indigo-400 border-indigo-500/40 bg-indigo-500/10'
-    : verdict === 'Needs Practice' ? 'text-amber-400 border-amber-500/40 bg-amber-500/10'
-    : 'text-rose-400 border-rose-500/40 bg-rose-500/10';
+  const verdictColor = verdict === 'Strong Hire' ? 'text-indigo-600 dark:text-indigo-400 border-indigo-300 dark:border-indigo-500/20 bg-emerald-500/10'
+    : verdict === 'Hire' ? 'text-indigo-600 dark:text-indigo-400 border-indigo-300 dark:border-indigo-500/20 bg-indigo-500/10'
+    : verdict === 'Needs Practice' ? 'text-indigo-600 dark:text-indigo-400 border-indigo-300 dark:border-indigo-500/20 bg-amber-500/10'
+    : 'text-indigo-600 dark:text-indigo-400 border-indigo-300 dark:border-indigo-500/20 bg-rose-500/10';
 
   return (
     <div className="max-w-5xl mx-auto space-y-8 animate-in fade-in duration-300">
       {/* Action Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <button onClick={() => onNavigate('dashboard')}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-semibold border border-white/10 transition-colors">
+          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white dark:bg-white/5 hover:bg-slate-100 dark:bg-white/10 text-slate-700 dark:text-slate-300 text-xs font-semibold border border-slate-300 dark:border-white/10 transition-colors">
           <ArrowLeft className="w-4 h-4" /> Back to Dashboard
         </button>
         <button onClick={handleStartNew}
@@ -115,16 +115,16 @@ export default function InterviewReport({ onNavigate }) {
       </div>
 
       {/* Hero Score Banner */}
-      <div className="glass-card rounded-3xl p-6 lg:p-8 border border-indigo-500/30 overflow-hidden space-y-6">
+      <div className="rounded-3xl p-6 lg:p-8 bg-fuchsia-50 dark:bg-fuchsia-900/20 border border-fuchsia-200 dark:border-fuchsia-500/30 overflow-hidden space-y-6 shadow-sm">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-semibold">
-              <CheckCircle2 className="w-3.5 h-3.5" /> AI Interview Complete
+            <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-fuchsia-100 dark:bg-fuchsia-500/20 border border-fuchsia-200 dark:border-fuchsia-500/30 text-fuchsia-800 dark:text-fuchsia-200 text-xs font-bold shadow-xs">
+              <CheckCircle2 className="w-3.5 h-3.5 text-fuchsia-600 dark:text-fuchsia-400" /> AI Interview Complete
             </div>
-            <h1 className="text-2xl lg:text-4xl font-extrabold text-white font-['Outfit'] tracking-tight">
+            <h1 className="text-2xl lg:text-4xl font-black text-slate-900 dark:text-white font-['Outfit'] tracking-tight">
               {session?.role || session?.category || 'Interview'} Report
             </h1>
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
               {session?.difficulty} Level • {validQAs.length} Questions • 
               {skippedCount > 0 ? ` ${skippedCount} Skipped •` : ''}
               {emptyCount > 0 ? ` ${emptyCount} Unanswered •` : ''}
@@ -135,7 +135,7 @@ export default function InterviewReport({ onNavigate }) {
           <div className="flex items-center gap-5">
             <ScoreRing score={overallScore} size={90} />
             <div>
-              <span className="block text-xs font-bold text-slate-400 uppercase tracking-wider">Overall Score</span>
+              <span className="block text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider">Overall Score</span>
               <span className={`mt-1 px-3 py-1 rounded-xl border text-sm font-black ${verdictColor}`}>{verdict}</span>
             </div>
           </div>
@@ -144,14 +144,14 @@ export default function InterviewReport({ onNavigate }) {
         {/* 4 Dimensional Averages */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
-            { label: 'Accuracy', val: avgAccuracy, color: 'text-emerald-400' },
-            { label: 'Communication', val: avgComm, color: 'text-indigo-400' },
-            { label: 'Confidence', val: avgConf, color: 'text-purple-400' },
-            { label: 'Depth', val: avgDepth, color: 'text-amber-400' },
+            { label: 'Accuracy', val: avgAccuracy, color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50/80 dark:bg-blue-900/20 border-blue-200 dark:border-blue-500/30' },
+            { label: 'Communication', val: avgComm, color: 'text-purple-600 dark:text-purple-400', bg: 'bg-purple-50/80 dark:bg-purple-900/20 border-purple-200 dark:border-purple-500/30' },
+            { label: 'Confidence', val: avgConf, color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-50/80 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-500/30' },
+            { label: 'Depth', val: avgDepth, color: 'text-cyan-600 dark:text-cyan-400', bg: 'bg-cyan-50/80 dark:bg-cyan-900/20 border-cyan-200 dark:border-cyan-500/30' },
           ].map(d => (
-            <div key={d.label} className="p-3.5 rounded-2xl bg-white/5 border border-white/10 text-center">
-              <span className="block text-xs font-semibold text-slate-400 mb-1">{d.label}</span>
-              <span className={`text-xl font-bold ${d.color}`}>{d.val}</span>
+            <div key={d.label} className={`p-3.5 rounded-2xl border text-center shadow-xs ${d.bg}`}>
+              <span className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">{d.label}</span>
+              <span className={`text-2xl font-black font-['Outfit'] ${d.color}`}>{d.val}</span>
             </div>
           ))}
         </div>
@@ -159,28 +159,28 @@ export default function InterviewReport({ onNavigate }) {
 
       {/* Strengths + Improvement Areas */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="glass-card rounded-3xl p-6 border border-white/10 space-y-3">
-          <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm">
-            <ThumbsUp className="w-4 h-4" /> Key Strengths
+        <div className="rounded-3xl p-6 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-500/30 space-y-3 shadow-sm">
+          <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300 font-bold text-sm">
+            <ThumbsUp className="w-4 h-4 text-emerald-600 dark:text-emerald-400" /> Key Strengths
           </div>
           <ul className="space-y-2">
             {allStrengths.length > 0 ? [...new Set(allStrengths)].slice(0, 6).map((s, i) => (
-              <li key={i} className="flex items-start gap-2 text-xs text-slate-300">
-                <span className="text-emerald-400 font-bold mt-0.5">✓</span> {s}
+              <li key={i} className="flex items-start gap-2 text-xs text-slate-700 dark:text-slate-300 font-medium">
+                <span className="text-emerald-600 dark:text-emerald-400 font-bold mt-0.5">✓</span> {s}
               </li>
             )) : (
               <li className="text-xs text-slate-500">Complete more questions to see your strengths.</li>
             )}
           </ul>
         </div>
-        <div className="glass-card rounded-3xl p-6 border border-white/10 space-y-3">
-          <div className="flex items-center gap-2 text-rose-400 font-bold text-sm">
-            <TrendingUp className="w-4 h-4" /> What to Improve
+        <div className="rounded-3xl p-6 bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-500/30 space-y-3 shadow-sm">
+          <div className="flex items-center gap-2 text-rose-700 dark:text-rose-300 font-bold text-sm">
+            <TrendingUp className="w-4 h-4 text-rose-600 dark:text-rose-400" /> What to Improve
           </div>
           <ul className="space-y-2">
             {allImprovements.length > 0 ? [...new Set(allImprovements)].slice(0, 6).map((imp, i) => (
-              <li key={i} className="flex items-start gap-2 text-xs text-slate-300">
-                <span className="text-rose-400 font-bold mt-0.5">→</span> {imp}
+              <li key={i} className="flex items-start gap-2 text-xs text-slate-700 dark:text-slate-300 font-medium">
+                <span className="text-rose-600 dark:text-rose-400 font-bold mt-0.5">→</span> {imp}
               </li>
             )) : (
               <li className="text-xs text-slate-500">Great job! No major improvements flagged.</li>
@@ -191,23 +191,23 @@ export default function InterviewReport({ onNavigate }) {
 
       {/* Topics to Study */}
       {missedTopics.length > 0 && (
-        <div className="glass-card rounded-3xl p-6 border border-amber-500/20 space-y-3">
-          <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
-            <BookOpen className="w-4 h-4" /> Topics to Study Before Your Real Interview
+        <div className="rounded-3xl p-6 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-500/30 space-y-3 shadow-sm">
+          <div className="flex items-center gap-2 text-amber-800 dark:text-amber-200 font-bold text-sm">
+            <BookOpen className="w-4 h-4 text-amber-600 dark:text-amber-400" /> Topics to Study Before Your Real Interview
           </div>
           <div className="flex flex-wrap gap-2">
             {missedTopics.map((t, i) => (
-              <span key={i} className="px-3 py-1 rounded-lg bg-amber-500/15 border border-amber-500/25 text-amber-300 text-xs font-semibold">{t}</span>
+              <span key={i} className="px-3 py-1 rounded-lg bg-amber-100 dark:bg-amber-500/20 border border-amber-300 dark:border-amber-500/30 text-amber-800 dark:text-amber-200 text-xs font-bold">{t}</span>
             ))}
           </div>
-          <p className="text-xs text-slate-500">These key concepts appeared in questions but were not mentioned in your answers. Study them to improve your score.</p>
+          <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">These key concepts appeared in questions but were not mentioned in your answers. Study them to improve your score.</p>
         </div>
       )}
 
       {/* Question-by-Question Breakdown */}
-      <div className="glass-card rounded-3xl p-6 lg:p-8 border border-white/10 space-y-4">
-        <h3 className="font-extrabold text-xl text-white font-['Outfit']">Question-by-Question Breakdown</h3>
-        <p className="text-xs text-slate-400">Click any question to see your answer, score, and the correct model answer.</p>
+      <div className="rounded-3xl p-6 lg:p-8 bg-sky-50/80 dark:bg-sky-900/20 border border-sky-200 dark:border-sky-500/30 space-y-4 shadow-sm">
+        <h3 className="font-extrabold text-xl text-slate-900 dark:text-white font-['Outfit']">Question-by-Question Breakdown</h3>
+        <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">Click any question to see your answer, score, and the correct model answer.</p>
 
         <div className="space-y-3">
           {validQAs.map((qa, idx) => {
@@ -218,47 +218,47 @@ export default function InterviewReport({ onNavigate }) {
             const isEmpty = !isSkipped && !qa.answer?.trim() && !qa.code?.trim();
 
             return (
-              <div key={idx} className={`rounded-2xl border transition-all ${isOpen ? 'bg-white/5 border-indigo-500/30' : 'bg-white/[0.02] border-white/10 hover:border-white/20'}`}>
+              <div key={idx} className={`rounded-2xl border transition-all ${isOpen ? 'bg-white dark:bg-slate-900 border-sky-300 dark:border-sky-500/30 shadow-md' : 'bg-white/80 dark:bg-white/5 border-sky-200/60 dark:border-white/10 hover:border-sky-400 dark:hover:border-white/20'}`}>
                 {/* Question Header Row */}
                 <button
                   className="w-full flex items-center justify-between gap-4 p-4 text-left"
                   onClick={() => setExpandedQ(isOpen ? null : idx)}>
                   <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <span className="w-7 h-7 rounded-lg bg-indigo-600/20 text-indigo-400 font-bold text-xs flex items-center justify-center border border-indigo-500/30 flex-shrink-0">
+                    <span className="w-8 h-8 rounded-lg bg-sky-100 dark:bg-sky-500/20 text-sky-700 dark:text-sky-300 font-black text-xs flex items-center justify-center border border-sky-200 dark:border-sky-500/30 flex-shrink-0">
                       Q{idx + 1}
                     </span>
-                    <p className="text-sm font-semibold text-white truncate">{qa.question?.question || qa.question?.question_text}</p>
+                    <p className="text-sm font-bold text-slate-900 dark:text-white truncate">{qa.question?.question || qa.question?.question_text}</p>
                   </div>
                   <div className="flex items-center gap-3 flex-shrink-0">
                     {isSkipped ? (
-                      <span className="flex items-center gap-1 text-xs text-amber-400 font-bold px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/20">
-                        <SkipForward className="w-3 h-3" /> Skipped
+                      <span className="flex items-center gap-1 text-xs text-amber-700 dark:text-amber-300 font-bold px-2.5 py-1 rounded-lg bg-amber-100 dark:bg-amber-500/20 border border-amber-200 dark:border-amber-500/30">
+                        <SkipForward className="w-3 h-3 text-amber-600" /> Skipped
                       </span>
                     ) : isEmpty ? (
-                      <span className="text-xs text-rose-400 font-bold px-2.5 py-1 rounded-lg bg-rose-500/10 border border-rose-500/20">No Answer</span>
+                      <span className="text-xs text-rose-700 dark:text-rose-300 font-bold px-2.5 py-1 rounded-lg bg-rose-100 dark:bg-rose-500/20 border border-rose-200 dark:border-rose-500/30">No Answer</span>
                     ) : (
-                      <span className="text-sm font-bold"><ScoreBadge score={score} /> <span className="text-slate-500 text-xs">/10</span></span>
+                      <span className="text-sm font-bold"><ScoreBadge score={score} /> <span className="text-slate-500 text-xs font-semibold">/10</span></span>
                     )}
-                    {isOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                    {isOpen ? <ChevronUp className="w-4 h-4 text-slate-600 dark:text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-600 dark:text-slate-400" />}
                   </div>
                 </button>
 
                 {/* Expanded Content */}
                 {isOpen && (
-                  <div className="px-4 pb-5 space-y-4 border-t border-white/10 pt-4">
+                  <div className="px-4 pb-5 space-y-4 border-t border-sky-100 dark:border-white/10 pt-4">
                     {/* Your Answer */}
                     <div className="space-y-1.5">
-                      <p className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                        <Mic className="w-3.5 h-3.5 text-indigo-400" /> Your Answer
+                      <p className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                        <Mic className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" /> Your Answer
                       </p>
-                      <div className="p-3 rounded-xl bg-black/30 border border-white/5 text-xs text-slate-300 leading-relaxed italic min-h-[2.5rem]">
+                      <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-black/30 border border-slate-200 dark:border-white/5 text-xs text-slate-700 dark:text-slate-300 leading-relaxed italic min-h-[2.5rem]">
                         {qa.answer?.trim()
                           ? `"${qa.answer}"`
                           : <span className="text-slate-500 not-italic">{isSkipped ? 'Question was skipped.' : 'No answer was provided.'}</span>
                         }
                       </div>
                       {qa.code?.trim() && (
-                        <pre className="p-3 rounded-xl bg-black/50 border border-white/5 text-xs text-emerald-300 overflow-x-auto mt-1">{qa.code}</pre>
+                        <pre className="p-3.5 rounded-xl bg-slate-900 text-emerald-400 border border-slate-700 text-xs overflow-x-auto mt-1 font-mono">{qa.code}</pre>
                       )}
                     </div>
 
@@ -272,8 +272,8 @@ export default function InterviewReport({ onNavigate }) {
                           { l: 'Depth', v: eval_.depth },
                           { l: 'Examples', v: eval_.examples },
                         ].map(d => (
-                          <div key={d.l} className="p-2 rounded-xl bg-white/5 border border-white/10 text-center">
-                            <span className="block text-[10px] text-slate-400">{d.l}</span>
+                          <div key={d.l} className="p-2 rounded-xl bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 text-center">
+                            <span className="block text-[10px] font-bold text-slate-600 dark:text-slate-400">{d.l}</span>
                             <ScoreBadge score={d.v} />
                           </div>
                         ))}
@@ -282,29 +282,29 @@ export default function InterviewReport({ onNavigate }) {
 
                     {/* AI Feedback */}
                     {eval_.detailedFeedback && (
-                      <div className="p-3 rounded-xl bg-indigo-950/30 border border-indigo-500/20 space-y-1">
-                        <p className="text-xs font-bold text-indigo-400 flex items-center gap-1.5"><MessageSquare className="w-3.5 h-3.5" /> AI Feedback</p>
-                        <p className="text-xs text-slate-300 leading-relaxed">{eval_.detailedFeedback}</p>
+                      <div className="p-3.5 rounded-xl bg-purple-50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-500/30 space-y-1">
+                        <p className="text-xs font-bold text-purple-700 dark:text-purple-300 flex items-center gap-1.5"><MessageSquare className="w-3.5 h-3.5" /> AI Feedback</p>
+                        <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed font-medium">{eval_.detailedFeedback}</p>
                       </div>
                     )}
 
                     {/* Improvements */}
                     {eval_.improvements?.length > 0 && (
-                      <div className="p-3 rounded-xl bg-amber-950/20 border border-amber-500/20 space-y-1.5">
-                        <p className="text-xs font-bold text-amber-400 flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" /> What to Improve</p>
+                      <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-500/30 space-y-1.5">
+                        <p className="text-xs font-bold text-amber-700 dark:text-amber-300 flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" /> What to Improve</p>
                         {eval_.improvements.map((imp, i) => (
-                          <p key={i} className="text-xs text-slate-300">→ {imp}</p>
+                          <p key={i} className="text-xs text-slate-700 dark:text-slate-300 font-medium">→ {imp}</p>
                         ))}
                       </div>
                     )}
 
                     {/* ✅ Correct / Ideal Answer */}
                     {(eval_.idealAnswer || qa.question?.idealAnswer) && (
-                      <div className="p-4 rounded-xl bg-emerald-950/30 border border-emerald-500/25 space-y-1.5">
-                        <p className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
-                          <CheckCircle2 className="w-3.5 h-3.5" /> Correct / Model Answer
+                      <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-500/30 space-y-1.5">
+                        <p className="text-xs font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> Correct / Model Answer
                         </p>
-                        <p className="text-xs text-emerald-100 leading-relaxed">
+                        <p className="text-xs text-slate-800 dark:text-emerald-100 leading-relaxed font-medium">
                           {eval_.idealAnswer || qa.question?.idealAnswer}
                         </p>
                       </div>
@@ -317,7 +317,7 @@ export default function InterviewReport({ onNavigate }) {
                         {qa.question.expectedKeywords.map((k, i) => {
                           const mentioned = (qa.answer || '').toLowerCase().includes(k.toLowerCase());
                           return (
-                            <span key={i} className={`px-2 py-0.5 rounded text-[10px] font-semibold ${mentioned ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/25' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
+                            <span key={i} className={`px-2 py-0.5 rounded text-[10px] font-bold ${mentioned ? 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-800 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-500/30' : 'bg-rose-100 dark:bg-rose-500/20 text-rose-800 dark:text-rose-200 border border-rose-200 dark:border-rose-500/30'}`}>
                               {mentioned ? '✓' : '✗'} {k}
                             </span>
                           );
@@ -333,10 +333,10 @@ export default function InterviewReport({ onNavigate }) {
       </div>
 
       {/* Bottom CTA */}
-      <div className="glass-card rounded-3xl p-6 border border-white/10 flex flex-col sm:flex-row items-center justify-between gap-4">
+      <div className="rounded-3xl p-6 bg-violet-50 dark:bg-violet-900/20 border border-violet-200 dark:border-violet-500/30 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
         <div>
-          <p className="font-bold text-white">Practice Makes Perfect</p>
-          <p className="text-xs text-slate-400 mt-0.5">Review the model answers above and practice those topics before your next interview.</p>
+          <p className="font-extrabold text-slate-900 dark:text-white text-base">Practice Makes Perfect</p>
+          <p className="text-xs text-slate-600 dark:text-slate-400 font-medium mt-0.5">Review the model answers above and practice those topics before your next interview.</p>
         </div>
         <button onClick={handleStartNew} className="px-6 py-2.5 rounded-xl glow-btn text-white font-bold text-sm shadow-xl whitespace-nowrap">
           Start Another Interview

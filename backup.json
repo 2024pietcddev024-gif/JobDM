@@ -1,0 +1,29 @@
+[
+  {
+    "id": "605a8eb9-61c5-496b-87fd-c2467f8cd7aa",
+    "user_id": "d1cc06c9-9ec6-4cf5-9f5f-90d6ea00f8f8",
+    "college_id": null,
+    "system_role": "SUPER_ADMIN",
+    "status": "ACTIVE",
+    "created_at": "2026-10-08T18:54:24.696Z",
+    "updated_at": "2026-10-08T18:54:24.696Z"
+  },
+  {
+    "id": "a1b8f9c4-92cd-4e71-bdbe-21b638990d81",
+    "user_id": "c8c2e96b-618b-426e-8110-1ed5362242d4",
+    "college_id": null,
+    "system_role": "SUPER_ADMIN",
+    "status": "ACTIVE",
+    "created_at": "2026-10-08T19:15:21.644Z",
+    "updated_at": "2026-10-08T19:15:21.644Z"
+  },
+  {
+    "id": "4bb2dfb2-fdbc-4a00-ab2c-d80d1d7d9f45",
+    "user_id": "4c1e0036-ee34-4728-b6e0-b54cbfdb9044",
+    "college_id": "6f376796-54ea-4917-ba0b-42b84e1033bd",
+    "system_role": "TUTOR",
+    "status": "ACTIVE",
+    "created_at": "2026-10-09T18:55:11.655Z",
+    "updated_at": "2026-10-09T18:55:11.655Z"
+  }
+]

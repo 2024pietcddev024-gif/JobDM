@@ -44,3 +44,8 @@ Thumbs.db
 # Testing
 coverage/
 .nyc_output/
+# Local Piston runtime files and backups
+data/piston/
+data/piston_backup_*/
+data/piston_volume_backup*.tar.gz
+*.tar.gz

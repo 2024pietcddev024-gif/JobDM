@@ -48,24 +48,24 @@ export default function AuthModal() {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in">
-      <div className="w-full max-w-md glass-card rounded-3xl p-6 lg:p-8 border border-white/10 shadow-2xl relative">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/75 dark:bg-black/75 backdrop-blur-md animate-in fade-in">
+      <div className="w-full max-w-md glass-card rounded-3xl p-6 lg:p-8 border border-slate-300 dark:border-white/10 shadow-2xl relative">
         <button
           onClick={() => setIsAuthModalOpen(false)}
-          className="absolute top-5 right-5 text-slate-400 hover:text-white p-1"
+          className="absolute top-5 right-5 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:text-white p-1"
         >
           <X className="w-5 h-5" />
         </button>
 
         {/* Modal Header */}
         <div className="text-center mb-6">
-          <div className="w-12 h-12 rounded-2xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center mx-auto mb-3">
-            <Sparkles className="w-6 h-6 text-indigo-400" />
+          <div className="w-12 h-12 rounded-2xl bg-indigo-600/20 border border-indigo-300 dark:border-indigo-500/20 flex items-center justify-center mx-auto mb-3">
+            <Sparkles className="w-6 h-6 text-indigo-600 dark:text-indigo-400" />
           </div>
-          <h3 className="font-extrabold text-2xl text-white font-['Outfit']">
-            {mode === 'login' ? 'Welcome Back to InterviewIQ' : mode === 'signup' ? 'Create Your Account' : 'Reset Password'}
+          <h3 className="font-extrabold text-2xl text-slate-900 dark:text-white font-['Outfit']">
+            {mode === 'login' ? 'Welcome Back to JobDM' : mode === 'signup' ? 'Create Your Account' : 'Reset Password'}
           </h3>
-          <p className="text-xs text-slate-400 mt-1">
+          <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
             {mode === 'login' ? 'Sign in to access AI mock interviews & report history' : mode === 'signup' ? 'Join thousands practicing technical and HR interviews' : 'Enter your email to receive reset instructions'}
           </p>
         </div>
@@ -73,20 +73,20 @@ export default function AuthModal() {
         {/* Social Login note */}
         {mode !== 'forgot' && (
           <div className="space-y-3 mb-5">
-            <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-300 text-xs text-center">
+            <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800/40 text-blue-700 dark:text-blue-300 text-xs text-center">
               <span className="font-semibold">Google OAuth</span> — coming soon. Use email &amp; password below.
             </div>
           </div>
         )}
 
         {resetSent ? (
-          <div className="p-4 rounded-2xl bg-emerald-950/40 border border-emerald-500/30 text-center space-y-2">
-            <CheckCircle className="w-8 h-8 text-emerald-400 mx-auto" />
-            <p className="font-bold text-white text-sm">Verification Email Sent!</p>
-            <p className="text-xs text-slate-300">Check your inbox for the password reset link.</p>
+          <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40 text-center space-y-2">
+            <CheckCircle className="w-8 h-8 text-emerald-600 dark:text-emerald-400 mx-auto" />
+            <p className="font-bold text-slate-900 dark:text-white text-sm">Verification Email Sent!</p>
+            <p className="text-xs text-slate-700 dark:text-slate-300">Check your inbox for the password reset link.</p>
             <button
               onClick={() => { setResetSent(false); setMode('login'); }}
-              className="mt-2 text-xs text-indigo-400 hover:underline font-semibold"
+              className="mt-2 text-xs text-emerald-700 dark:text-emerald-400 hover:underline font-semibold"
             >
               Back to Sign In
             </button>
@@ -94,18 +94,18 @@ export default function AuthModal() {
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
-              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs font-medium">
+              <div className="p-3 rounded-xl bg-rose-500/10 border border-indigo-300 dark:border-indigo-500/20 text-indigo-600 dark:text-indigo-400 text-xs font-medium">
                 {error}
               </div>
             )}
             
             {mode === 'signup' && (
               <div>
-                <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
                   Full Name
                 </label>
                 <div className="relative">
-                  <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                  <User className="w-4 h-4 text-slate-600 dark:text-slate-400 absolute left-3.5 top-3" />
                   <input
                     type="text"
                     required
@@ -119,11 +119,11 @@ export default function AuthModal() {
             )}
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
                 Email Address
               </label>
               <div className="relative">
-                <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                <Mail className="w-4 h-4 text-slate-600 dark:text-slate-400 absolute left-3.5 top-3" />
                 <input
                   type="email"
                   required
@@ -138,21 +138,21 @@ export default function AuthModal() {
             {mode !== 'forgot' && (
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
                     Password
                   </label>
                   {mode === 'login' && (
                     <button
                       type="button"
                       onClick={() => setMode('forgot')}
-                      className="text-[11px] text-indigo-400 hover:underline font-medium"
+                      className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline font-medium"
                     >
                       Forgot password?
                     </button>
                   )}
                 </div>
                 <div className="relative">
-                  <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                  <Lock className="w-4 h-4 text-slate-600 dark:text-slate-400 absolute left-3.5 top-3" />
                   <input
                     type="password"
                     required
@@ -179,18 +179,18 @@ export default function AuthModal() {
         )}
 
         {/* Footer Toggle */}
-        <div className="mt-5 text-center text-xs text-slate-400">
+        <div className="mt-5 text-center text-xs text-slate-600 dark:text-slate-400">
           {mode === 'login' ? (
             <p>
               Don't have an account?{' '}
-              <button onClick={() => setMode('signup')} className="text-indigo-400 font-bold hover:underline">
+              <button onClick={() => setMode('signup')} className="text-indigo-600 dark:text-indigo-400 font-bold hover:underline">
                 Sign Up
               </button>
             </p>
           ) : (
             <p>
               Already have an account?{' '}
-              <button onClick={() => setMode('login')} className="text-indigo-400 font-bold hover:underline">
+              <button onClick={() => setMode('login')} className="text-indigo-600 dark:text-indigo-400 font-bold hover:underline">
                 Sign In
               </button>
             </p>

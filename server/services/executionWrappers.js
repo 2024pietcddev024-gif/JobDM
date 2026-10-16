@@ -132,6 +132,9 @@ def list_to_array(head):
 
 def _smart_convert(func, args):
     sig = inspect.signature(func)
+    params = [p for p in sig.parameters.values() if p.name != 'self']
+    if len(args) == 1 and isinstance(args[0], (list, tuple)) and len(params) > 1 and len(args[0]) >= len(params):
+        args = args[0]
     new_args = []
     for i, (name, param) in enumerate(sig.parameters.items()):
         if name == 'self':
@@ -269,7 +272,8 @@ function generateCppWrapper(code, parsedCases, meta) {
 
   let testCasesStr = "";
   parsedCases.forEach((tc, i) => {
-    const argsStr = tc.map((val, idx) => toCppLiteral(val, pTypes[idx])).join(', ');
+    const actualArgs = (pTypes.length > 1 && tc.length === 1 && Array.isArray(tc[0])) ? tc[0] : tc;
+    const argsStr = actualArgs.map((val, idx) => toCppLiteral(val, pTypes[idx])).join(', ');
     testCasesStr += `
         try {
             auto res = ${invokeStr}(${argsStr});
@@ -462,9 +466,19 @@ function generateJavaWrapper(code, parsedCases, meta) {
   const invokeStr = meta.isClass ? `new ${meta.className}().${meta.methodName}` : `${meta.methodName}`;
   const pTypes = getJavaParamTypes(code, meta.methodName);
   
+  const importLines = [];
+  const nonImportLines = [];
+  code.split('\n').forEach(line => {
+    if (line.trim().startsWith('import ')) importLines.push(line.trim());
+    else nonImportLines.push(line);
+  });
+  const cleanCode = nonImportLines.join('\n');
+  const userImports = importLines.join('\n');
+
   let testCasesStr = "";
   parsedCases.forEach((tc, i) => {
-    const argsStr = tc.map((val, idx) => toJavaLiteral(val, pTypes[idx])).join(', ');
+    const actualArgs = (pTypes.length > 1 && tc.length === 1 && Array.isArray(tc[0])) ? tc[0] : tc;
+    const argsStr = actualArgs.map((val, idx) => toJavaLiteral(val, pTypes[idx])).join(', ');
     testCasesStr += `
         try {
             Object res = ${invokeStr}(${argsStr});
@@ -479,6 +493,7 @@ function generateJavaWrapper(code, parsedCases, meta) {
   return `
 import java.util.*;
 import java.io.*;
+${userImports}
 
 public class Main {
     public static TreeNode buildTree(Integer[] vals) {
@@ -621,7 +636,7 @@ class ListNode {
     ListNode(int val, ListNode next) { this.val = val; this.next = next; }
 }
 
-${code}
+${cleanCode}
 `;
 }
 

@@ -22,6 +22,7 @@ export const AuthProvider = ({ children }) => {
       target_level: u.target_level || u.targetLevel || 'Intermediate',
       streakDays: u.streakDays || u.streak_days || 0,
       streak_days: u.streak_days || u.streakDays || 0,
+      campus: u.campus || null
     };
   };
 
@@ -35,6 +36,19 @@ export const AuthProvider = ({ children }) => {
           });
           if (res.ok) {
             const data = await res.json();
+            
+            try {
+              const campRes = await fetch(`${API_URL}/campus/me`, {
+                headers: { Authorization: `Bearer ${token}` }
+              });
+              if (campRes.ok) {
+                const campData = await campRes.json();
+                data.user.campus = campData.campus;
+              }
+            } catch (err) {
+              console.error('Campus check failed', err);
+            }
+
             setUser(normaliseUser(data.user));
             setIsAuthenticated(true);
           } else {
@@ -49,12 +63,15 @@ export const AuthProvider = ({ children }) => {
     checkAuth();
   }, []);
 
-  const login = async (email, password) => {
+  const login = async (email, password, expectedRole = null, collegeCode = null) => {
     try {
+      const payload = { email, password, panel: expectedRole };
+      if (collegeCode) payload.college_code = collegeCode;
+
       const res = await fetch(`${API_URL}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify(payload)
       });
       
       const data = await res.json().catch(() => null);
@@ -63,7 +80,36 @@ export const AuthProvider = ({ children }) => {
       }
       
       localStorage.setItem('interviewiq_token', data.token);
-      setUser(normaliseUser(data.user));
+      
+      try {
+        const campRes = await fetch(`${API_URL}/campus/me`, {
+          headers: { Authorization: `Bearer ${data.token}` }
+        });
+        if (campRes.ok) {
+          const campData = await campRes.json();
+          data.user.campus = campData.campus;
+        }
+      } catch (e) {}
+
+      const normalizedUser = normaliseUser(data.user);
+      
+      // Perform strict UI role validation if expectedRole is provided
+      if (expectedRole) {
+         const actualRole = normalizedUser.campus?.role || 'STUDENT';
+         let isAuthorized = false;
+         
+         if (expectedRole === 'student' && (!normalizedUser.campus?.role || actualRole === 'STUDENT')) isAuthorized = true;
+         else if (expectedRole === 'teacher' && actualRole === 'TUTOR') isAuthorized = true;
+         else if (expectedRole === 'hr' && actualRole === 'HR') isAuthorized = true;
+         
+         if (!isAuthorized) {
+           localStorage.removeItem('interviewiq_token');
+           let roleName = expectedRole === 'student' ? 'Student' : expectedRole === 'teacher' ? 'Teacher' : 'HR';
+           return { success: false, error: `Access denied: Your account does not have ${roleName} privileges.` };
+         }
+      }
+
+      setUser(normalizedUser);
       setIsAuthenticated(true);
       setIsAuthModalOpen(false);
       return { success: true };
@@ -174,10 +220,10 @@ export const AuthProvider = ({ children }) => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#080c14] flex items-center justify-center">
+      <div className="min-h-screen bg-slate-50 dark:bg-[#080c14] flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <div className="w-10 h-10 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
-          <p className="text-slate-400 text-sm">Loading InterviewIQ...</p>
+          <p className="text-slate-600 dark:text-slate-400 text-sm">Loading JobDM...</p>
         </div>
       </div>
     );

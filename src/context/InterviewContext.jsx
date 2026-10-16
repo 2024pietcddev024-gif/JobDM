@@ -41,6 +41,11 @@ export const InterviewProvider = ({ children }) => {
   const [interviewComplete, setInterviewComplete] = useState(false);
   const [finalReport, setFinalReport] = useState(null);
 
+  const [isTerminated, setIsTerminated] = useState(false);
+  const [terminationReason, setTerminationReason] = useState(null);
+  const [tabSwitchCount, setTabSwitchCount] = useState(0);
+  const [clipboardViolationCount, setClipboardViolationCount] = useState(0);
+
   // Track all asked question texts to prevent repetition
   const askedQuestionsRef = useRef([]);
 
@@ -58,6 +63,35 @@ export const InterviewProvider = ({ children }) => {
     }
   };
 
+  const syncSessionStatus = async (sessionId) => {
+    if (!sessionId || String(sessionId).startsWith('ephemeral')) return;
+    const token = localStorage.getItem('interviewiq_token');
+    if (!token) return;
+
+    try {
+      const res = await fetch(`${API_URL}/interviews/session/${sessionId}/status`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTabSwitchCount(data.tabSwitchCount || 0);
+        setClipboardViolationCount(data.clipboardViolationCount || 0);
+        if (data.isTerminated) {
+          setIsTerminated(true);
+          setTerminationReason(data.terminationReason);
+          setInterviewComplete(true);
+          setFinalReport(prev => prev || {
+            session: { id: sessionId, status: 'TERMINATED', termination_reason: data.terminationReason, overall_score: data.overallScore },
+            questionsHistory: [],
+            isTerminated: true
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[InterviewContext] Could not sync session status:', e.message);
+    }
+  };
+
   useEffect(() => { 
     fetchHistory(); 
     
@@ -72,6 +106,14 @@ export const InterviewProvider = ({ children }) => {
           setQuestionsHistory(parsed.questionsHistory || []);
           setQuestionIndex(parsed.questionIndex || 0);
           askedQuestionsRef.current = parsed.askedQuestions || [];
+          setTabSwitchCount(parsed.tabSwitchCount || 0);
+          setClipboardViolationCount(parsed.clipboardViolationCount || 0);
+          if (parsed.isTerminated) {
+            setIsTerminated(true);
+            setTerminationReason(parsed.terminationReason);
+          }
+          // Verify with backend
+          syncSessionStatus(parsed.activeSession.id);
         }
       } catch (e) {
         localStorage.removeItem('interviewiq_active_session');
@@ -86,10 +128,64 @@ export const InterviewProvider = ({ children }) => {
         currentQuestion,
         questionsHistory,
         questionIndex,
-        askedQuestions: askedQuestionsRef.current
+        askedQuestions: askedQuestionsRef.current,
+        tabSwitchCount,
+        clipboardViolationCount,
+        isTerminated,
+        terminationReason
       }));
     }
-  }, [activeSession, currentQuestion, questionsHistory, questionIndex, interviewComplete]);
+  }, [activeSession, currentQuestion, questionsHistory, questionIndex, interviewComplete, tabSwitchCount, clipboardViolationCount, isTerminated, terminationReason]);
+
+  const reportViolation = async (violationType, details = {}) => {
+    if (!activeSession) return null;
+    const token = localStorage.getItem('interviewiq_token');
+    if (!token) return null;
+
+    try {
+      const res = await fetch(`${API_URL}/interviews/violation`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          sessionId: activeSession.id,
+          violationType,
+          details
+        })
+      });
+
+      const data = await safeJson(res);
+      if (res.ok) {
+        if (violationType === 'TAB_SWITCH') {
+          setTabSwitchCount(data.violationCount);
+        } else {
+          setClipboardViolationCount(data.violationCount);
+        }
+
+        if (data.terminated) {
+          setIsTerminated(true);
+          setTerminationReason(data.terminationReason);
+          setInterviewComplete(true);
+          const termReport = {
+            session: {
+              ...activeSession,
+              status: 'TERMINATED',
+              termination_reason: data.terminationReason,
+              terminated_at: data.terminatedAt
+            },
+            questionsHistory,
+            isTerminated: true
+          };
+          setFinalReport(termReport);
+          fetchHistory();
+        }
+
+        return data;
+      }
+    } catch (err) {
+      console.error('[InterviewContext] reportViolation error:', err);
+    }
+    return null;
+  };
 
   const startNewInterview = async ({ category, role, difficulty, resumeData, totalQuestions = 10, mode = 'voice', codingLanguage, interviewMode }) => {
     const token = localStorage.getItem('interviewiq_token');
@@ -104,6 +200,10 @@ export const InterviewProvider = ({ children }) => {
     setQuestionIndex(0);
     setInterviewComplete(false);
     setFinalReport(null);
+    setIsTerminated(false);
+    setTerminationReason(null);
+    setTabSwitchCount(0);
+    setClipboardViolationCount(0);
     askedQuestionsRef.current = [];
 
     try {
@@ -327,6 +427,10 @@ export const InterviewProvider = ({ children }) => {
     setInterviewComplete(false);
     setFinalReport(null);
     setInterviewError(null);
+    setIsTerminated(false);
+    setTerminationReason(null);
+    setTabSwitchCount(0);
+    setClipboardViolationCount(0);
     askedQuestionsRef.current = [];
     localStorage.removeItem('interviewiq_active_session');
   };
@@ -343,6 +447,12 @@ export const InterviewProvider = ({ children }) => {
       interviewError,
       interviewComplete,
       finalReport,
+      isTerminated,
+      terminationReason,
+      tabSwitchCount,
+      clipboardViolationCount,
+      reportViolation,
+      syncSessionStatus,
       startNewInterview,
       submitCurrentAnswer,
       skipCurrentQuestion,

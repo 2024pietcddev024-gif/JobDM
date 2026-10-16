@@ -235,11 +235,288 @@ router.post('/generate', authenticateToken, async (req, res) => {
   }
 });
 
+// POST /api/code/session/start — Start or resume active coding session
+router.post('/session/start', authenticateToken, async (req, res) => {
+  const { problemId, language } = req.body;
+  if (!problemId) return res.status(400).json({ error: 'problemId is required' });
+
+  try {
+    // Look for existing active session for this user and problem
+    const existingRes = await db.query(
+      `SELECT * FROM coding_sessions 
+       WHERE user_id = $1 AND problem_id = $2 AND status = 'IN_PROGRESS' 
+       ORDER BY created_at DESC LIMIT 1`,
+      [req.user.id, problemId]
+    );
+
+    if (existingRes.rows.length > 0) {
+      return res.json({ session: existingRes.rows[0], isResumed: true });
+    }
+
+    // Create new coding session
+    const insertRes = await db.query(
+      `INSERT INTO coding_sessions (user_id, problem_id, language, status)
+       VALUES ($1, $2, $3, 'IN_PROGRESS') RETURNING *`,
+      [req.user.id, problemId, language || 'Python']
+    );
+
+    res.status(201).json({ session: insertRes.rows[0], isResumed: false });
+  } catch (err) {
+    console.error('[code/session/start] error:', err);
+    res.status(500).json({ error: 'Failed to start coding session' });
+  }
+});
+
+// POST /api/code/violation — Record anti-cheating policy violation during coding practice
+router.post('/violation', authenticateToken, async (req, res) => {
+  const { sessionId, violationType, details } = req.body;
+  if (!sessionId || !violationType) {
+    return res.status(400).json({ error: 'sessionId and violationType are required' });
+  }
+
+  const vType = String(violationType).toUpperCase();
+  if (vType !== 'TAB_SWITCH' && vType !== 'CLIPBOARD_ACTION') {
+    return res.status(400).json({ error: 'Invalid violationType. Must be TAB_SWITCH or CLIPBOARD_ACTION' });
+  }
+
+  try {
+    const sessionRes = await db.query(
+      `SELECT id, user_id, problem_id, status, tab_switch_count, clipboard_violation_count, termination_reason, terminated_at 
+       FROM coding_sessions WHERE id = $1 AND user_id = $2`,
+      [sessionId, req.user.id]
+    );
+
+    if (sessionRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Coding session not found' });
+    }
+
+    const session = sessionRes.rows[0];
+
+    // If already terminated, return terminated state idempotently without creating duplicate termination records
+    if (session.status === 'TERMINATED') {
+      const currentCount = vType === 'TAB_SWITCH' ? (session.tab_switch_count || 2) : (session.clipboard_violation_count || 2);
+      return res.json({
+        warning: false,
+        terminated: true,
+        alreadyTerminated: true,
+        status: 'TERMINATED',
+        violationType: vType,
+        violationCount: currentCount,
+        tab_switch_count: session.tab_switch_count || 0,
+        tabSwitchCount: session.tab_switch_count || 0,
+        clipboard_violation_count: session.clipboard_violation_count || 0,
+        clipboardViolationCount: session.clipboard_violation_count || 0,
+        limit: 2,
+        termination_reason: session.termination_reason,
+        terminationReason: session.termination_reason,
+        terminatedAt: session.terminated_at,
+        message: session.termination_reason || 'Session is already terminated.'
+      });
+    }
+
+    // Do not record violations on completed sessions
+    if (session.status === 'COMPLETED') {
+      return res.json({
+        warning: false,
+        terminated: false,
+        status: 'COMPLETED',
+        message: 'Session is already completed. No violations recorded.'
+      });
+    }
+
+    const countCol = vType === 'TAB_SWITCH' ? 'tab_switch_count' : 'clipboard_violation_count';
+    const newCount = (session[countCol] || 0) + 1;
+
+    // Log to session_violations
+    await db.query(
+      `INSERT INTO session_violations (session_id, session_type, student_id, violation_type, violation_count, details)
+       VALUES ($1, 'CODING', $2, $3, $4, $5)`,
+      [sessionId, req.user.id, vType, newCount, JSON.stringify(details || {})]
+    );
+
+    const tabCount = vType === 'TAB_SWITCH' ? newCount : (session.tab_switch_count || 0);
+    const clipCount = vType === 'CLIPBOARD_ACTION' ? newCount : (session.clipboard_violation_count || 0);
+
+    if (newCount >= 2) {
+      const terminationReason = vType === 'TAB_SWITCH'
+        ? 'Session terminated because the tab-switch violation limit was reached.'
+        : 'Session terminated because the prohibited clipboard action limit was reached.';
+
+      await db.query(
+        `UPDATE coding_sessions 
+         SET ${countCol} = $1,
+             status = 'TERMINATED',
+             termination_reason = $2,
+             terminated_at = NOW(),
+             updated_at = NOW()
+         WHERE id = $3 AND user_id = $4`,
+        [newCount, terminationReason, sessionId, req.user.id]
+      );
+
+      return res.json({
+        warning: false,
+        terminated: true,
+        status: 'TERMINATED',
+        violationType: vType,
+        violationCount: newCount,
+        tab_switch_count: tabCount,
+        tabSwitchCount: tabCount,
+        clipboard_violation_count: clipCount,
+        clipboardViolationCount: clipCount,
+        limit: 2,
+        termination_reason: terminationReason,
+        terminationReason,
+        terminatedAt: new Date().toISOString(),
+        message: terminationReason
+      });
+    } else {
+      await db.query(
+        `UPDATE coding_sessions SET ${countCol} = $1, updated_at = NOW() WHERE id = $2 AND user_id = $3`,
+        [newCount, sessionId, req.user.id]
+      );
+
+      const warningMessage = vType === 'TAB_SWITCH'
+        ? 'Warning 1 of 2: You left your active session. Switching tabs or leaving the session repeatedly may terminate your interview or coding practice.'
+        : 'Warning 1 of 2: Copying, cutting, or pasting code is not allowed during this coding session. Repeated violations will end the session.';
+
+      return res.json({
+        warning: true,
+        terminated: false,
+        status: session.status || 'ACTIVE',
+        violationType: vType,
+        violationCount: newCount,
+        tab_switch_count: tabCount,
+        tabSwitchCount: tabCount,
+        clipboard_violation_count: clipCount,
+        clipboardViolationCount: clipCount,
+        limit: 2,
+        message: warningMessage
+      });
+    }
+  } catch (err) {
+    console.error('[code/violation] error:', err);
+    res.status(500).json({ error: 'Server error recording violation' });
+  }
+});
+
+// GET /api/code/session/:sessionId/status — check coding session status and violation counts
+router.get('/session/:sessionId/status', authenticateToken, async (req, res) => {
+  const { sessionId } = req.params;
+  if (!sessionId) return res.status(400).json({ error: 'sessionId is required' });
+
+  try {
+    const sessionRes = await db.query(
+      `SELECT id, user_id, problem_id, language, status, tab_switch_count, clipboard_violation_count, termination_reason, terminated_at, created_at 
+       FROM coding_sessions WHERE id = $1 AND user_id = $2`,
+      [sessionId, req.user.id]
+    );
+
+    if (sessionRes.rows.length === 0) return res.status(404).json({ error: 'Session not found' });
+    const s = sessionRes.rows[0];
+
+    const vRes = await db.query(
+      `SELECT id, violation_type, violation_count, details, created_at 
+       FROM session_violations 
+       WHERE session_id = $1 AND session_type = 'CODING' 
+       ORDER BY created_at ASC`,
+      [sessionId]
+    );
+
+    res.json({
+      sessionId: s.id,
+      problemId: s.problem_id,
+      language: s.language,
+      status: s.status,
+      isTerminated: s.status === 'TERMINATED',
+      tabSwitchCount: s.tab_switch_count || 0,
+      clipboardViolationCount: s.clipboard_violation_count || 0,
+      terminationReason: s.termination_reason,
+      terminatedAt: s.terminated_at,
+      createdAt: s.created_at,
+      violations: vRes.rows
+    });
+  } catch (err) {
+    console.error('[code/session/status] error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /api/code/history — Student's past coding practice history with policy violation records
+router.get('/history', authenticateToken, async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT 
+         cs.id as session_id,
+         cs.problem_id,
+         cp.title as problem_title,
+         cp.difficulty,
+         cp.topic,
+         cs.language,
+         cs.status as session_status,
+         cs.tab_switch_count,
+         cs.clipboard_violation_count,
+         cs.termination_reason,
+         cs.terminated_at,
+         cs.created_at,
+         (
+           SELECT json_agg(json_build_object(
+             'id', sv.id,
+             'violation_type', sv.violation_type,
+             'violation_count', sv.violation_count,
+             'created_at', sv.created_at
+           ) ORDER BY sv.created_at ASC)
+           FROM session_violations sv
+           WHERE sv.session_id = cs.id::text AND sv.session_type = 'CODING'
+         ) as violations,
+         (
+           SELECT json_agg(json_build_object(
+             'id', ca.id,
+             'status', ca.status,
+             'language', ca.language,
+             'created_at', ca.created_at
+           ) ORDER BY ca.created_at DESC)
+           FROM coding_attempts ca
+           WHERE ca.session_id = cs.id OR (ca.user_id = cs.user_id AND ca.problem_id = cs.problem_id AND ca.created_at >= cs.created_at)
+         ) as attempts
+       FROM coding_sessions cs
+       LEFT JOIN coding_problems cp ON cs.problem_id = cp.id
+       WHERE cs.user_id = $1
+       ORDER BY cs.created_at DESC`,
+      [req.user.id]
+    );
+
+    res.json({ sessions: result.rows });
+  } catch (err) {
+    console.error('[code/history] error:', err);
+    res.status(500).json({ error: 'Server error fetching coding history' });
+  }
+});
+
 router.post('/run', authenticateOptional, async (req, res) => {
-  const { language, code, problemId } = req.body;
+  const { language, code, problemId, sessionId } = req.body;
 
   if (!language || !code || !problemId) {
     return res.status(400).json({ error: 'Language, code, and problemId are required' });
+  }
+
+  // Server-side enforcement: Check if coding session is terminated
+  if (sessionId) {
+    try {
+      const sessRes = await db.query(
+        'SELECT status, termination_reason FROM coding_sessions WHERE id = $1',
+        [sessionId]
+      );
+      if (sessRes.rows.length > 0 && sessRes.rows[0].status === 'TERMINATED') {
+        return res.status(403).json({
+          status: 'terminated',
+          error: 'Coding practice session is terminated due to policy violation. Code execution is disabled.',
+          terminated: true,
+          terminationReason: sessRes.rows[0].termination_reason
+        });
+      }
+    } catch (dbErr) {
+      console.warn('[code/run] termination check error:', dbErr.message);
+    }
   }
 
   // Detect empty or placeholder code server-side for safety
@@ -394,9 +671,28 @@ router.get('/progress', authenticateToken, async (req, res) => {
 });
 
 router.post('/submit', authenticateToken, async (req, res) => {
-  const { problemId, language, code } = req.body;
+  const { problemId, language, code, sessionId } = req.body;
   if (!problemId || !language || !code) {
     return res.status(400).json({ error: 'problemId, language, and code are required' });
+  }
+
+  // Server-side enforcement: Check if coding session is terminated
+  if (sessionId) {
+    try {
+      const sessRes = await db.query(
+        'SELECT status, termination_reason FROM coding_sessions WHERE id = $1 AND user_id = $2',
+        [sessionId, req.user.id]
+      );
+      if (sessRes.rows.length > 0 && sessRes.rows[0].status === 'TERMINATED') {
+        return res.status(403).json({
+          error: 'Coding practice session has been terminated due to policy violation. Submission rejected.',
+          terminated: true,
+          terminationReason: sessRes.rows[0].termination_reason
+        });
+      }
+    } catch (dbErr) {
+      console.warn('[code/submit] termination check error:', dbErr.message);
+    }
   }
 
   // Detect empty or placeholder code server-side for safety
@@ -457,12 +753,24 @@ router.post('/submit', authenticateToken, async (req, res) => {
       });
     }
 
-    // Save attempt only after server-side evaluation
+    // Save attempt only after server-side evaluation with session_id linkage
     await db.query(
-      `INSERT INTO coding_attempts (user_id, problem_id, language, code_content, status)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [req.user.id, problemId, language, code, dbStatus]
+      `INSERT INTO coding_attempts (user_id, problem_id, language, code_content, status, session_id)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [req.user.id, problemId, language, code, dbStatus, sessionId || null]
     );
+
+    // Also mark coding session as COMPLETED if solved
+    if (dbStatus === 'solved' && sessionId) {
+      try {
+        await db.query(
+          `UPDATE coding_sessions SET status = 'COMPLETED', updated_at = NOW() WHERE id = $1 AND user_id = $2`,
+          [sessionId, req.user.id]
+        );
+      } catch (sessErr) {
+        console.warn('[code/submit] error updating coding_session status:', sessErr.message);
+      }
+    }
 
     // Also populate coding_solved if success
     if (dbStatus === 'solved') {

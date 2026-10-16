@@ -1,0 +1,508 @@
+Created At: 2026-10-04T11:03:37+05:30
+Completed At: 2026-10-04T11:03:37+05:30
+File Path: `file:///c:/interviewiq/server/services/aiEngine.js`
+Total Lines: 876
+Total Bytes: 61731
+Showing lines 1 to 800
+Content truncated: showing bytes 0-46080 of 58894. To see more, call this tool again with the same line range and ContentOffset=46080.
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1: import { GoogleGenerativeAI } from '@google/generative-ai';
+2: import { generateWrapperCode } from './executionWrappers.js';
+3: 
+4: const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
+5: const isValidGeminiKey = GEMINI_KEY && (GEMINI_KEY.startsWith('AIza') || GEMINI_KEY.startsWith('AQ.'));
+6: const genAI = isValidGeminiKey ? new GoogleGenerativeAI(GEMINI_KEY) : null;
+7: 
+8: if (GEMINI_KEY && !isValidGeminiKey) {
+9:   console.warn('[AI Engine] GEMINI_API_KEY looks invalid. Falling back to offline question bank.');
+10: }
+11: 
+12: // Map any incoming category string → our fallback bank key
+13: function categoryToKey(category = '') {
+14:   const c = category.toLowerCase().trim();
+15:   if (c.includes('backend') || c.includes('node') || c.includes('server')) return 'backend';
+16:   if (c.includes('frontend') || c.includes('react') || c.includes('ui')) return 'frontend';
+17:   if (c.includes('system') || c.includes('design')) return 'system-design';
+18:   if (c.includes('hr') || c.includes('behav') || c.includes('soft skill')) return 'hr';
+19:   if (c.includes('ai') || c.includes('ml') || c.includes('machine')) return 'aiml';
+20:   if (c.includes('data science') || c.includes('analytics') || c.includes('statistic')) return 'datascience';
+21:   if (c.includes('data') || c.includes('sql') || c.includes('database')) return 'datascience';
+22:   if (c.includes('devops') || c.includes('cloud') || c.includes('aws') || c.includes('docker')) return 'devops';
+23:   if (c.includes('software') || c.includes('algorithm') || c.includes('dsa') || c.includes('general')) return 'software';
+24:   return 'backend';
+25: }
+26: 
+27: function calculateSimilarity(str1, str2) {
+28:   const words1 = new Set(str1.toLowerCase().replace(/[^\w\s]/g, '').split(/\s+/).filter(w => w.length > 3));
+29:   const words2 = new Set(str2.toLowerCase().replace(/[^\w\s]/g, '').split(/\s+/).filter(w => w.length > 3));
+30:   let intersection = 0;
+31:   for (let w of words1) if (words2.has(w)) intersection++;
+32:   const union = words1.size + words2.size - intersection;
+33:   return union === 0 ? 0 : intersection / union;
+34: }
+35: 
+36: export async function generateQuestion({ category, role, difficulty, resumeData, pastQA = [], questionIndex = 0, codingLanguage }) {
+37:   const askedQuestions = pastQA.map(q => (q.question_text || q.question || '').toLowerCase().trim());
+38:   const pastTopics = pastQA.map(q => Array.isArray(q.topics) ? q.topics.join(', ') : q.topics || '').join(', ').toLowerCase();
+39: 
+40:   if (!genAI) {
+41:     return generateFallbackQuestion({ category, role, difficulty, codingLanguage, pastQA: askedQuestions, questionIndex });
+42:   }
+43: 
+44:   let attempts = 0;
+45:   let lastError = null;
+46: 
+47:   while (attempts < 3) {
+48:     attempts++;
+49:     try {
+50:       const model = genAI.getGenerativeModel({ model: 'gemini-3.7-flash' });
+51:       
+52:       const categoryFocusPrompt = resumeData
+53:         ? `Generate questions primarily for ${category || role} ${codingLanguage ? `using ${codingLanguage}` : ''}. Although other domains may have been detected in the candidate's resume, the candidate explicitly selected to focus on ${category || role}. Do NOT generate questions outside of this selected category.`
+54:         : `Generate questions primarily for ${category || role} ${codingLanguage ? `using ${codingLanguage}` : ''}.`;
+55: 
+56:       const prompt = `You are an expert technical interviewer for a ${difficulty || 'Intermediate'} level ${role || category} interview.
+57: ${resumeData ? `Candidate Resume: Skills [${(resumeData.extractedSkills || resumeData.skills)?.join(', ')}], Projects [${(resumeData.extractedProjects || resumeData.projects)?.map(p => typeof p === 'string' ? p : p.name).join(', ')}]` : ''}
+58: 
+59: ${categoryFocusPrompt}
+60: 
+61: Previously asked questions (DO NOT repeat these concepts): 
+62: ${askedQuestions.length > 0 ? askedQuestions.join(' | ') : 'None'}
+63: 
+64: Previously covered topics: ${pastTopics}
+65: 
+66: Question number: ${questionIndex + 1} of 10.
+67: 
+68: Generate a UNIQUE interview question that is semantically DIFFERENT from all previously asked questions.
+69: Vary the type: conceptual, coding, problem-solving, debugging, or behavioral. Make it specific and realistic.
+70: ${codingLanguage ? `If you generate a coding question, ensure the question description explicitly specifies that it should be solved in ${codingLanguage}, and provide a relevant coding starter template in ${codingLanguage}.` : ''}
+71: 
+72: Return ONLY valid JSON (no markdown, no backticks) matching this structure:
+73: {
+74:   "question": "The question text here",
+75:   "topic": "The core topic (e.g. REST API)",
+76:   "type": "conceptual", // conceptual, coding, or behavioral
+77:   "difficulty": "${difficulty || 'Intermediate'}",
+78:   "expectedKeywords": ["keyword1", "keyword2"],
+79:   "codingPrompt": null, // If type is "coding", put the starter code string here. Otherwise null.
+80:   "idealAnswer": "A comprehensive model answer (3-5 sentences)."
+81: }`;
+82: 
+83:       const result = await model.generateContent(prompt);
+84:       let text = result.response.text();
+85:       text = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
+86:       const parsed = JSON.parse(text);
+87:       if (!parsed.idealAnswer) parsed.idealAnswer = 'See the key topics and expected keywords for guidance.';
+88: 
+89:       // Duplicate verification
+90:       let isDuplicate = false;
+91:       for (const past of askedQuestions) {
+92:         const sim = calculateSimilarity(parsed.question, past);
+93:         if (sim > 0.45 || parsed.question.toLowerCase().includes(past.slice(0, 30))) {
+94:           isDuplicate = true;
+95:           console.warn(`[AI Engine] Duplicate question generated (similarity ${sim.toFixed(2)}). Retrying...`);
+96:           break;
+97:         }
+98:       }
+99: 
+100:       if (!isDuplicate) {
+101:         // Normalize for frontend format
+102:         parsed.topics = parsed.topics || [parsed.topic].filter(Boolean);
+103:         return parsed;
+104:       }
+105:     } catch (err) {
+106:       lastError = err;
+107:       if (err?.status === 403 || err?.message?.includes('403') || err?.message?.toLowerCase().includes('forbidden')) {
+108:         console.error('[AI Engine] Gemini 403 Forbidden — check API key quota.');
+109:         break; // No point in retrying
+110:       }
+111:       console.warn(`[AI Engine] Error generating question (attempt ${attempts}):`, err?.message || err);
+112:     }
+113:   }
+114: 
+115:   console.warn('[AI Engine] Max retries reached or fatal error. Using fallback.');
+116:   return generateFallbackQuestion({ category, role, difficulty, codingLanguage, pastQA: askedQuestions, questionIndex });
+117: }
+118: 
+119: // ─── Expanded Fallback Question Bank ─────────────────────────────────────────
+120: const FALLBACK_QUESTIONS = {
+121:   backend: [
+122:     { question: 'Explain the fundamental differences between REST and GraphQL APIs. When would you choose one over the other?', type: 'conceptual', topics: ['REST', 'GraphQL', 'API Design'], expectedKeywords: ['overfetching', 'underfetching', 'schema', 'caching', 'endpoints'], idealAnswer: 'REST uses fixed endpoints and HTTP methods where the server decides the response shape. GraphQL uses a single endpoint where clients specify exactly what data they need, solving overfetching and underfetching. Choose REST for simple CRUD and public APIs; choose GraphQL when multiple clients need different data shapes or when reducing network calls is critical.' },
+123:     { question: 'How would you handle high traffic spikes on a database? Discuss indexing, connection pooling, and caching.', type: 'conceptual', topics: ['PostgreSQL', 'Redis', 'Performance'], expectedKeywords: ['indexing', 'connection pool', 'cache invalidation', 'read replica', 'sharding'], idealAnswer: 'Use database indexes on frequently queried columns to speed lookups. Connection pooling (e.g., PgBouncer) reduces overhead of creating new connections. Read replicas distribute read load. Redis caching stores hot data in memory to avoid DB hits. For extreme scale, horizontal sharding distributes data across nodes.' },
+124:     { question: 'Design a simple Rate Limiter allowing 5 requests per 10 seconds per IP address.', type: 'coding', topics: ['Rate Limiting', 'Algorithms'], expectedKeywords: ['sliding window', 'token bucket', 'map', 'timestamp'], codingPrompt: '// Complete the RateLimiter class\nclass RateLimiter {\n  constructor(limit = 5, windowMs = 10000) {\n    this.limit = limit;\n    this.windowMs = windowMs;\n    this.requests = new Map();\n  }\n  isAllowed(ip) {\n    // TODO: implement sliding window\n  }\n}', idealAnswer: 'Use a sliding window algorithm. Store timestamps of requests per IP in a Map. On each request, filter out timestamps older than windowMs, check if remaining count < limit, push new timestamp if allowed. Token bucket is an alternative that refills tokens at a constant rate.' },
+125:     { question: 'What is the N+1 query problem in ORMs and how do you solve it?', type: 'conceptual', topics: ['ORM', 'Database', 'Performance'], expectedKeywords: ['eager loading', 'join', 'batch', 'lazy loading', 'dataloader'], idealAnswer: 'N+1 occurs when fetching a list of N items and then making 1 additional query per item (e.g., fetching all users then their profiles one by one). Solutions: use eager loading (JOIN in SQL), batch loading (DataLoader pattern in GraphQL), or SELECT IN queries to fetch all related records in one query.' },
+126:     { question: 'Explain the CAP theorem and how it applies when designing a distributed system.', type: 'conceptual', topics: ['Distributed Systems', 'CAP Theorem'], expectedKeywords: ['consistency', 'availability', 'partition tolerance', 'eventual consistency', 'trade-off'], idealAnswer: 'CAP theorem states a distributed system can guarantee only 2 of: Consistency (all nodes see same data), Availability (every request gets a response), and Partition Tolerance (system works despite network splits). Since network partitions are inevitable, real systems choose CP (consistent but may be unavailable during partition, e.g., HBase) or AP (available but eventually consistent, e.g., Cassandra).' },
+127:     { question: 'How does JWT authentication work? What are its advantages and risks?', type: 'conceptual', topics: ['JWT', 'Authentication', 'Security'], expectedKeywords: ['header', 'payload', 'signature', 'stateless', 'expiration', 'refresh token'], idealAnswer: 'JWT has three parts: header (algorithm), payload (claims), and signature. Server signs the token; clients send it with requests. The server verifies the signature without a DB lookup (stateless). Advantage: scalable, no session store needed. Risks: tokens cannot be invalidated before expiry — mitigate with short expiry + refresh tokens, and store refresh tokens server-side.' },
+128:     { question: 'What is database normalization? Explain 1NF, 2NF, and 3NF with examples.', type: 'conceptual', topics: ['Database Design', 'Normalization', 'SQL'], expectedKeywords: ['1NF', '2NF', '3NF', 'atomic', 'partial dependency', 'transitive dependency'], idealAnswer: '1NF: each column holds atomic (indivisible) values, no repeating groups. 2NF: must be 1NF + no partial dependency (non-key columns depend on the whole composite primary key). 3NF: must be 2NF + no transitive dependency (non-key columns depend only on the primary key, not on other non-key columns). Normalization reduces redundancy and update anomalies.' },
+129:     { question: 'Explain the difference between SQL and NoSQL databases. When would you use each?', type: 'conceptual', topics: ['SQL', 'NoSQL', 'Database'], expectedKeywords: ['ACID', 'schema', 'horizontal scaling', 'document', 'key-value', 'relational'], idealAnswer: 'SQL databases (PostgreSQL, MySQL) enforce a fixed schema, support ACID transactions, and excel at complex joins. Use when data relationships are complex and consistency is critical. NoSQL databases (MongoDB, Cassandra, Redis) offer flexible schemas and horizontal scaling. Use for high-volume unstructured data, real-time apps, or when eventual consistency is acceptable.' },
+130:   ],
+131:   frontend: [
+132:     { question: 'How does React Virtual DOM diffing work? Explain reconciliation and how keys optimize list rendering.', type: 'conceptual', topics: ['React', 'Virtual DOM'], expectedKeywords: ['reconciliation', 'keys', 'fiber', 're-render', 'diffing'], idealAnswer: 'React creates a Virtual DOM — a lightweight JS representation of the real DOM. On state change, React creates a new VDOM, diffs it against the previous one (reconciliation), and only updates changed real DOM nodes. Keys help React identify which list items changed, moved, or were removed — without keys, React re-renders entire lists inefficiently.' },
+133:     { question: 'What is the difference between useMemo and useCallback hooks? When should you use each?', type: 'conceptual', topics: ['React Hooks', 'Performance'], expectedKeywords: ['useMemo', 'useCallback', 'memoization', 'dependency array', 'referential equality'], idealAnswer: 'useMemo memoizes a computed value — re-computes only when dependencies change (prevents expensive calculations on every render). useCallback memoizes a function reference — returns the same function instance unless dependencies change (prevents unnecessary child re-renders when passing callbacks as props). Use useMemo for expensive computations; useCallback when passing stable callbacks to React.memo children.' },
+134:     { question: 'Explain CSS Box Model and the difference between box-sizing: content-box and border-box.', type: 'conceptual', topics: ['CSS', 'Layout'], expectedKeywords: ['margin', 'border', 'padding', 'content', 'border-box', 'content-box'], idealAnswer: 'The CSS Box Model has layers: content, padding, border, margin. With content-box (default), width applies only to content — padding and border add to total size. With border-box, width includes content + padding + border, making layout calculations much more predictable. Most modern CSS resets use `* { box-sizing: border-box; }`.' },
+135:     { question: 'What is Event Delegation in JavaScript and why is it useful?', type: 'conceptual', topics: ['JavaScript', 'DOM', 'Events'], expectedKeywords: ['event bubbling', 'parent', 'target', 'performance', 'dynamic elements'], idealAnswer: 'Event delegation attaches a single event listener to a parent element instead of many listeners on individual children. It works because events bubble up from child to parent. Benefits: fewer listeners (better performance), automatically handles dynamically added elements. Example: listen for clicks on a `<ul>` and check `e.target` to identify which `<li>` was clicked.' },
+136:     { question: 'What is the difference between `==` and `===` in JavaScript? What is type coercion?', type: 'conceptual', topics: ['JavaScript', 'Type System'], expectedKeywords: ['strict equality', 'loose equality', 'type coercion', 'NaN', 'null'], idealAnswer: '`==` (loose equality) converts operands to the same type before comparing (type coercion): `"0" == 0` is true. `===` (strict equality) requires both value and type to match: `"0" === 0` is false. Always prefer `===` to avoid subtle bugs from coercion. Notable: `NaN === NaN` is false; use `Number.isNaN()` instead.' },
+137:     { question: 'What are JavaScript Promises and how do async/await work under the hood?', type: 'conceptual', topics: ['JavaScript', 'Async', 'Promises'], expectedKeywords: ['microtask queue', 'event loop', 'resolve', 'reject', 'then', 'catch'], idealAnswer: 'A Promise represents a future value with states: pending, fulfilled, rejected. async/await is syntactic sugar over Promises — `await` pauses execution of an async function until the Promise resolves, then returns the value. Under the hood, resolved Promises queue microtasks (higher priority than macrotasks like setTimeout). This keeps the event loop non-blocking.' },
+138:   ],
+139:   'system-design': [
+140:     { question: 'How would you design a scalable URL shortener like Bitly? Walk through database schema, hash generation, and caching.', type: 'conceptual', topics: ['URL Shortener', 'Hashing', 'Scalability'], expectedKeywords: ['base62', 'redis cache', 'redirection', 'db sharding', 'collision'], idealAnswer: 'Generate a unique short code using base62 encoding of an auto-increment ID or a hash (MD5 truncated). Store mappings in a DB (id, short_code, original_url). Cache hot short_codes in Redis for O(1) lookup. For scale: use consistent hashing for DB sharding, CDN for redirect responses, and a write-through cache strategy.' },
+141:     { question: 'Design a real-time chat application for 10M daily active users. Discuss WebSockets vs Polling and message persistence.', type: 'conceptual', topics: ['WebSockets', 'Message Queues'], expectedKeywords: ['websockets', 'kafka', 'message queue', 'connection manager', 'fan-out'], idealAnswer: 'Use WebSockets for full-duplex real-time messaging. A connection manager layer maps user IDs to WebSocket server instances. Messages flow through Kafka for durability and fan-out (delivering to offline users). Persist messages in Cassandra (optimized for time-series writes). Use Redis pub/sub for real-time notifications across servers.' },
+142:     { question: 'Design a notification system that sends push, email, and SMS notifications reliably at scale.', type: 'conceptual', topics: ['Notifications', 'Queue', 'Reliability'], expectedKeywords: ['message queue', 'retry', 'dead letter queue', 'idempotency', 'priority'], idealAnswer: 'Decouple producers from consumers using a message queue (SQS/Kafka). Different consumer workers handle push (FCM/APNs), email (SendGrid), and SMS (Twilio). Implement retries with exponential backoff and a dead letter queue for failed notifications. Use idempotency keys to prevent duplicate sends. Priority queues handle critical alerts first.' },
+143:     { question: 'Design YouTube\'s video upload and streaming pipeline. How would you handle transcoding and CDN delivery?', type: 'conceptual', topics: ['Video Streaming', 'CDN', 'Transcoding'], expectedKeywords: ['chunk upload', 'transcoding', 'HLS', 'CDN', 'object storage', 'adaptive bitrate'], idealAnswer: 'Upload in chunks to handle large files and resume. Store raw video in object storage (S3). A job queue triggers transcoding workers that convert to multiple resolutions (360p, 720p, 1080p) in HLS format for adaptive bitrate streaming. Serve via CDN with edge caches close to users. Use pre-signed URLs for secure access.' },
+144:   ],
+145:   hr: [
+146:     { question: 'Tell me about a time you had a technical disagreement with a team member. How did you resolve it?', type: 'behavioral', topics: ['Conflict Resolution', 'Communication'], expectedKeywords: ['situation', 'task', 'action', 'result', 'compromise', 'listen'], idealAnswer: 'Use the STAR method. Describe a specific disagreement (e.g., choice of technology). Explain how you listened to understand their perspective, presented data/evidence for your approach, and found a compromise or deferred to the team\'s decision for the sake of progress. Highlight what you learned from the experience.' },
+147:     { question: 'Describe a project where a tight deadline threatened quality. What tradeoffs did you make?', type: 'behavioral', topics: ['Prioritization', 'Time Management'], expectedKeywords: ['mvp', 'tradeoffs', 'communication', 'deliverable', 'technical debt'], idealAnswer: 'Identify the core MVP features vs nice-to-haves. Communicate the tradeoffs to stakeholders early. Implement the critical path features with good test coverage, while deferring non-critical features with documented technical debt. After delivery, schedule a sprint to address the deferred work. Transparency with leadership is key.' },
+148:     { question: 'Tell me about a time you learned a new technology quickly to complete a project. How did you approach it?', type: 'behavioral', topics: ['Learning Agility', 'Self-Development'], expectedKeywords: ['documentation', 'practice', 'deadline', 'resources', 'applied'], idealAnswer: 'Describe the technology and business context. Explain your learning strategy: reading official docs, building a small proof-of-concept, following tutorials, asking senior developers. Highlight how you applied it to the actual project and the outcome. Emphasize adaptability and structured self-learning.' },
+149:     { question: 'Where do you see yourself in 3-5 years? What are your career goals?', type: 'behavioral', topics: ['Career Goals', 'Ambition'], expectedKeywords: ['growth', 'skills', 'leadership', 'contribution', 'learning'], idealAnswer: 'Be specific and align with the company\'s growth areas. Example: "In 3 years I aim to become a senior engineer proficient in distributed systems, mentor junior team members, and contribute to architectural decisions. In 5 years, I\'d like to lead a team or specialize as a principal engineer in a domain I\'m passionate about." Show ambition while staying grounded.' },
+150:     { question: 'Tell me about your greatest professional failure. What did you learn from it?', type: 'behavioral', topics: ['Self-Awareness', 'Growth Mindset'], expectedKeywords: ['mistake', 'responsibility', 'learned', 'improved', 'outcome'], idealAnswer: 'Choose a real failure that demonstrates self-awareness. Briefly describe what went wrong and own your part of it without blame-shifting. Focus more on what you learned and the concrete changes you made afterward. Show that you can reflect critically on yourself and turn failures into growth opportunities.' },
+151:   ],
+152:   aiml: [
+153:     { question: 'Explain the difference between fine-tuning a foundation model and RAG. When would you choose each?', type: 'conceptual', topics: ['LLMs', 'RAG', 'Fine-tuning'], expectedKeywords: ['embeddings', 'vector db', 'context window', 'hallucination', 'cost', 'domain adaptation'], idealAnswer: 'Fine-tuning trains the model on your domain-specific data to adapt its weights — expensive but produces a model that "knows" your domain style. RAG (Retrieval-Augmented Generation) retrieves relevant documents at inference time and injects them into the prompt — cheaper and keeps knowledge updatable. Use fine-tuning for consistent tone/format; use RAG for dynamic, frequently changing knowledge bases.' },
+154:     { question: 'How would you detect and mitigate bias in a machine learning model?', type: 'conceptual', topics: ['Bias', 'Fairness', 'ML Ethics'], expectedKeywords: ['training data', 'representation', 'fairness metrics', 'disparate impact', 'debiasing'], idealAnswer: 'Audit training data for underrepresentation of demographic groups. Use fairness metrics (demographic parity, equalized odds). Techniques: re-sampling the training set, re-weighting examples, adversarial debiasing, or post-processing model outputs. Monitor model performance disaggregated by sensitive attributes after deployment.' },
+155:     { question: 'Explain the difference between supervised, unsupervised, and reinforcement learning with real examples.', type: 'conceptual', topics: ['ML Fundamentals', 'Learning Types'], expectedKeywords: ['labeled data', 'clustering', 'reward', 'classification', 'regression', 'policy'], idealAnswer: 'Supervised: learn from labeled data (input→output pairs). Examples: image classification, spam detection. Unsupervised: find patterns in unlabeled data. Examples: K-means clustering, PCA for dimensionality reduction. Reinforcement: an agent learns by taking actions in an environment to maximize cumulative reward. Examples: game-playing AI (AlphaGo), robotic control, recommendation systems.' },
+156:   ],
+157:   datascience: [
+158:     { question: 'How would you design an A/B test to measure the impact of a new recommendation algorithm on click-through rate?', type: 'conceptual', topics: ['A/B Testing', 'Statistics'], expectedKeywords: ['control group', 'statistical significance', 'p-value', 'sample size', 'bias', 'power'], idealAnswer: 'Randomly split users into control (old algorithm) and treatment (new algorithm) groups. Define the primary metric (CTR). Calculate required sample size using power analysis (typically 80% power, α=0.05). Run the test long enough to account for novelty effects and weekly seasonality. Analyze using a two-proportion z-test. Check for segment interactions and Simpson\'s paradox.' },
+159:     { question: 'What is overfitting and how do you prevent it in machine learning models?', type: 'conceptual', topics: ['Overfitting', 'Regularization', 'Validation'], expectedKeywords: ['regularization', 'cross-validation', 'dropout', 'early stopping', 'train-test split', 'L1 L2'], idealAnswer: 'Overfitting occurs when a model memorizes training data and fails to generalize to unseen data. Prevention techniques: use train/validation/test splits; k-fold cross-validation; L1/L2 regularization (penalizes large weights); dropout (randomly deactivate neurons during training); early stopping (stop training when validation loss increases); reduce model complexity; increase training data size.' },
+160:     { question: 'Explain the difference between precision and recall. When would you prioritize one over the other?', type: 'conceptual', topics: ['Evaluation Metrics', 'Classification'], expectedKeywords: ['precision', 'recall', 'F1', 'false positive', 'false negative', 'threshold'], idealAnswer: 'Precision = TP/(TP+FP) — of all predicted positives, how many are actually positive. Recall = TP/(TP+FN) — of all actual positives, how many did we find. Prioritize precision when false positives are costly (e.g., spam detection — don\'t mark legitimate emails as spam). Prioritize recall when false negatives are costly (e.g., cancer screening — don\'t miss a true case). F1-score balances both.' },
+161:     { question: 'What is the Central Limit Theorem and why does it matter for data science?', type: 'conceptual', topics: ['Statistics', 'CLT', 'Sampling'], expectedKeywords: ['sample mean', 'normal distribution', 'n', 'hypothesis testing', 'confidence interval'], idealAnswer: 'CLT states that the distribution of sample means approaches a normal distribution as sample size increases (n≥30), regardless of the population\'s original distribution. This is foundational for hypothesis testing and confidence intervals — it justifies using z-tests and t-tests on many real-world datasets and allows inference about population parameters from samples.' },
+162:   ],
+163:   devops: [
+164:     { question: 'Explain the difference between Docker containers and virtual machines. When would you use each?', type: 'conceptual', topics: ['Docker', 'Virtualization', 'Containers'], expectedKeywords: ['hypervisor', 'OS kernel', 'image', 'lightweight', 'isolation', 'portability'], idealAnswer: 'VMs virtualize hardware and run a full OS on a hypervisor — heavier but stronger isolation. Containers share the host OS kernel, making them much lighter and faster to start. Use VMs for strong isolation or running different OS types. Use containers for microservices, CI/CD pipelines, and consistent environment packaging. Kubernetes orchestrates containers at scale.' },
+165:     { question: 'What is CI/CD and how would you design a deployment pipeline for a web application?', type: 'conceptual', topics: ['CI/CD', 'DevOps', 'Automation'], expectedKeywords: ['continuous integration', 'deployment', 'testing', 'staging', 'rollback', 'blue-green'], idealAnswer: 'CI (Continuous Integration): automatically build and test code on every commit. CD (Continuous Delivery/Deployment): automatically deploy to staging or production after CI passes. Pipeline stages: code commit → lint/format → unit tests → integration tests → build Docker image → push to registry → deploy to staging → smoke tests → deploy to production. Use blue-green or canary deployments for zero-downtime releases with easy rollback.' },
+166:   ],
+167:   software: [
+168:     { question: 'Explain the difference between BFS and DFS. Describe a real problem where you\'d prefer each.', type: 'conceptual', topics: ['Algorithms', 'Graph Traversal'], expectedKeywords: ['queue', 'stack', 'shortest path', 'cycle detection', 'level order'], idealAnswer: 'BFS (breadth-first) uses a queue, explores level by level — ideal for finding the shortest path in unweighted graphs. DFS (depth-first) uses a stack/recursion, explores as far as possible before backtracking — ideal for detecting cycles, topological sorting, and finding paths in a maze. BFS example: finding shortest route in a city map. DFS example: detecting circular dependencies in a module graph.' },
+169:     { question: 'What is dynamic programming? Solve the Fibonacci sequence using both memoization and tabulation.', type: 'coding', topics: ['Dynamic Programming', 'Algorithms'], expectedKeywords: ['memoization', 'tabulation', 'overlapping subproblems', 'optimal substructure', 'cache'], codingPrompt: '// Implement both approaches\nfunction fibMemo(n, memo = {}) {\n  // TODO: memoization\n}\n\nfunction fibTab(n) {\n  // TODO: tabulation (bottom-up)\n}', idealAnswer: 'Dynamic programming solves problems with overlapping subproblems by storing results. Memoization (top-down): cache results of fib(n) in a hash map, recursively compute. Tabulation (bottom-up): build a table from base cases fib[0]=0, fib[1]=1, compute fib[i]=fib[i-1]+fib[i-2] iteratively. Both achieve O(n) time vs O(2^n) naive recursion.' },
+170:     { question: 'Explain SOLID principles with a real-world example for each.', type: 'conceptual', topics: ['OOP', 'SOLID', 'Design Principles'], expectedKeywords: ['single responsibility', 'open-closed', 'liskov', 'interface segregation', 'dependency inversion'], idealAnswer: 'S - Single Responsibility: each class has one job (User class only handles user data, not email sending). O - Open/Closed: open for extension, closed for modification (use inheritance/interfaces not if-else chains). L - Liskov Substitution: subclasses must work wherever a parent is expected. I - Interface Segregation: don\'t force clients to implement methods they don\'t use. D - Dependency Inversion: depend on abstractions not concrete implementations.' },
+171:     { question: 'What are the common time complexities (Big O)? Give an example algorithm for each.', type: 'conceptual', topics: ['Complexity', 'Big O', 'Algorithms'], expectedKeywords: ['O(1)', 'O(log n)', 'O(n)', 'O(n log n)', 'O(n²)', 'binary search', 'merge sort'], idealAnswer: 'O(1) - constant: hash map lookup. O(log n) - logarithmic: binary search. O(n) - linear: finding max in array. O(n log n) - linearithmic: merge sort, heapsort. O(n²) - quadratic: bubble sort, nested loops. O(2^n) - exponential: naive recursive Fibonacci. Understanding time complexity lets you predict performance at scale and choose the right algorithm for the data size.' },
+172:   ],
+173: };
+174: 
+175: function generateFallbackQuestion({ category, role, difficulty, pastQA = [], questionIndex = 0, codingLanguage }) {
+176:   const key = categoryToKey(category);
+177:   const bank = FALLBACK_QUESTIONS[key] || FALLBACK_QUESTIONS['backend'];
+178: 
+179:   // Filter out already-asked questions
+180:   const available = bank.filter(q =>
+181:     !pastQA.some(asked => asked.includes(q.question.toLowerCase().slice(0, 60)))
+182:   );
+183: 
+184:   // If all questions used, cycle but still try to pick a less-recently asked one
+185:   const pool = available.length > 0 ? available : bank;
+186:   let q = pool[questionIndex % pool.length];
+187: 
+188:   if (codingLanguage && q.type === 'coding') {
+189:      q = { ...q, question: q.question + ` Please implement your solution in ${codingLanguage}.` };
+190:   }
+191: 
+192:   return {
+193:     ...q,
+194:     codingPrompt: q.codingPrompt || null,
+195:     idealAnswer: q.idealAnswer || 'Focus on the expected keywords and key concepts listed in the topics.',
+196:     id: `q-fallback-${Date.now()}`
+197:   };
+198: }
+199: 
+200: // ─── Evaluation ───────────────────────────────────────────────────────────────
+201: export async function evaluateAnswer({ questionText, idealAnswer, expectedKeywords, answer, code, category, metrics = {} }) {
+202:   const trimmedAnswer = (answer || '').trim();
+203:   const trimmedCode = (code || '').trim();
+204:   const totalWords = (trimmedAnswer + ' ' + trimmedCode).trim().split(/\s+/).filter(Boolean).length;
+205: 
+206:   // If answer is completely empty → return failing score immediately (no AI call needed)
+207:   if (!trimmedAnswer && !trimmedCode) {
+208:     return {
+209:       accuracy: 0, communication: 0, confidence: 0, depth: 0, examples: 0,
+210:       overall: 0,
+211:       verdict: 'No Answer',
+212:       strengths: [],
+213:       improvements: [
+214:         'No answer was provided for this question.',
+215:         'Practice articulating your thoughts even when unsure — a partial answer is better than silence.',
+216:         idealAnswer ? `Model answer: ${idealAnswer}` : 'Review the core concepts for this topic.'
+217:       ],
+218:       detailedFeedback: 'You did not submit an answer for this question. In a real interview, always attempt to answer — even a partial response shows thought process.',
+219:       idealAnswer: idealAnswer || null
+220:     };
+221:   }
+222: 
+223:   if (!genAI) {
+224:     return generateFallbackEvaluation({ questionText, idealAnswer, answer: trimmedAnswer, code: trimmedCode, metrics, expectedKeywords });
+225:   }
+226: 
+227:   try {
+228:     let modelName = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+229:     const model = genAI.getGenerativeModel({ model: modelName });
+230:     const prompt = `You are an expert AI Interview Evaluator for a student preparing for technical interviews.
+231: Question: "${questionText}"
+232: Ideal Answer Reference: "${idealAnswer || 'N/A'}"
+233: Expected Keywords: ${expectedKeywords ? (Array.isArray(expectedKeywords) ? expectedKeywords.join(', ') : expectedKeywords) : 'None'}
+234: Candidate Answer: "${trimmedAnswer || 'No spoken answer provided'}"
+235: Candidate Code: "${trimmedCode || 'N/A'}"
+236: Speech Metrics: WPM: ${metrics.wpm || 'N/A'}, Filler Words: ${metrics.fillerCount || 0}.
+237: 
+238: IMPORTANT SCORING RULES:
+239: - If the candidate provided code, evaluate its time/space complexity, correctness, and handling of edge cases.
+240: - If the answer is very short (under 10 words) or completely off-topic (and no valid code is provided), accuracy and depth MUST be below 3.
+241: - Do NOT give communication/confidence scores above 5 if the answer was empty or irrelevant.
+242: - Be honest and strict — this helps the student improve.
+243: 
+244: Score each dimension 1.0-10.0 (be strict and honest):
+245: Return ONLY valid JSON (no backticks):
+246: {
+247:   "accuracy": 7.5,
+248:   "communication": 7.0,
+249:   "confidence": 6.5,
+250:   "depth": 7.0,
+251:   "examples": 6.0,
+252:   "overall": 7.0,
+253:   "verdict": "Hire",
+254:   "strengths": ["Mentioned REST vs GraphQL correctly"],
+255:   "improvements": ["Should have discussed caching strategies"],
+256:   "detailedFeedback": "2-3 sentence honest analysis of what was good and what needs improvement.",
+257:   "idealAnswer": "The ideal answer is: [3-5 sentence model answer]"
+258: }`;
+259: 
+260:     const result = await model.generateContent(prompt);
+261:     let text = result.response.text();
+262:     text = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
+263:     const parsed = JSON.parse(text);
+264:     if (!parsed.idealAnswer) parsed.idealAnswer = idealAnswer || null;
+265:     return parsed;
+266:   } catch (err) {
+267:     console.error('[AI Engine] Evaluation error:', err?.message || err);
+268:     return generateFallbackEvaluation({ questionText, idealAnswer, answer: trimmedAnswer, code: trimmedCode, metrics, expectedKeywords });
+269:   }
+270: }
+271: 
+272: function generateFallbackEvaluation({ questionText, idealAnswer, answer = '', code = '', metrics = {}, expectedKeywords = [] }) {
+273:   const combined = (answer + ' ' + code).trim();
+274:   const words = combined.split(/\s+/).filter(Boolean).length;
+275:   const keywords = Array.isArray(expectedKeywords) ? expectedKeywords : [];
+276: 
+277:   // If too short → very low scores
+278:   if (words < 5) {
+279:     return {
+280:       accuracy: 1.0, communication: 1.0, confidence: 1.5, depth: 1.0, examples: 1.0,
+281:       overall: 1.1,
+282:       verdict: 'Needs Practice',
+283:       strengths: [],
+284:       improvements: [
+285:         'Your answer was too brief to be evaluated meaningfully.',
+286:         'Try to provide at least 2-3 sentences explaining your thinking.',
+287:         idealAnswer ? `Model answer: ${idealAnswer}` : 'Study the core concepts for this topic.'
+288:       ],
+289:       detailedFeedback: `Your answer was very short (${words} word${words !== 1 ? 's' : ''}). In a real interview, aim for 3-5 sentences that cover the key concepts, real-world examples, and tradeoffs.`,
+290:       idealAnswer: idealAnswer || null
+291:     };
+292:   }
+293: 
+294:   let keywordHits = 0;
+295:   keywords.forEach(kw => {
+296:     if (combined.toLowerCase().includes(kw.toLowerCase())) keywordHits++;
+297:   });
+298: 
+299:   const keyRatio = keywordHits / Math.max(1, keywords.length);
+300:   const fillerPenalty = Math.min(1.5, (metrics.fillerCount || 0) * 0.3);
+301:   const lengthBonus = Math.min(1.5, words / 60);
+302: 
+303:   const accuracy = Math.min(9.0, Math.max(2.0, keyRatio * 5.0 + 3.0));
+304:   const comm = Math.min(9.0, Math.max(3.0, 6.5 + lengthBonus - fillerPenalty));
+305:   const conf = Math.min(9.0, Math.max(3.5, 7.0 - fillerPenalty));
+306:   const depth = Math.min(9.0, Math.max(2.0, accuracy * 0.8 + (code ? 1.0 : 0)));
+307:   const examples = Math.min(9.0, Math.max(2.0, keywordHits > 1 ? 7.0 : 4.0));
+308:   const overall = Number(((accuracy * 0.35) + (comm * 0.2) + (conf * 0.15) + (depth * 0.2) + (examples * 0.1)).toFixed(1));
+309: 
+310:   let verdict = 'Hire';
+311:   if (overall >= 8.5) verdict = 'Strong Hire';
+312:   else if (overall < 7.0) verdict = 'Needs Practice';
+313:   else if (overall < 7.5) verdict = 'Weak Hire';
+314: 
+315:   const strengths = [];
+316:   if (keywordHits > 0) strengths.push(`Mentioned ${keywordHits} of ${keywords.length} core concept(s): ${keywords.slice(0, keywordHits).join(', ')}.`);
+317:   if (words > 50) strengths.push('Provided a detailed response with good length.');
+318:   if ((metrics.fillerCount || 0) <= 2) strengths.push('Fluent delivery with minimal filler words.');
+319:   if (strengths.length === 0) strengths.push('Attempted to address the question — keep building on this.');
+320: 
+321:   const improvements = [];
+322:   if (keywords.length > 0 && keywordHits < keywords.length) {
+323:     const missing = keywords.filter(k => !combined.toLowerCase().includes(k.toLowerCase())).slice(0, 3);
+324:     if (missing.length) improvements.push(`Key concepts not mentioned: ${missing.join(', ')}. Study these specifically.`);
+325:   }
+326:   if (words < 30) improvements.push('Expand your answer with concrete examples and real-world context.');
+327:   if ((metrics.fillerCount || 0) > 3) improvements.push(`Reduce filler words (${metrics.fillerCount} detected) — practice speaking more deliberately.`);
+328:   if (improvements.length === 0) improvements.push('Practice explaining edge cases and failure scenarios for a stronger answer.');
+329: 
+330:   const idealRef = idealAnswer ? `\n\nModel Answer: ${idealAnswer}` : '';
+331: 
+332:   return {
+333:     accuracy: +accuracy.toFixed(1), communication: +comm.toFixed(1),
+334:     confidence: +conf.toFixed(1), depth: +depth.toFixed(1), examples: +examples.toFixed(1),
+335:     overall, verdict, strengths, improvements,
+336:     detailedFeedback: `Your answer scored ${overall}/10 overall. ${strengths[0] || ''} ${improvements[0] || ''}${idealRef}`,
+337:     idealAnswer: idealAnswer || null
+338:   };
+339: }
+340: 
+341: export async function evaluateCode({ problemTitle, problemDescription, language, code, testResult, inputFormat, outputFormat, constraints, examples }) {
+342:   let finalVerdict = 'EVALUATION UNAVAILABLE';
+343:   let passedCount = 0;
+344:   let totalCount = 0;
+345:   
+346:   if (testResult && typeof testResult === 'object') {
+347:      passedCount = testResult.passedCount || 0;
+348:      totalCount = testResult.totalCount || 0;
+349:      
+350:      if (testResult.status === 'compilation_error') finalVerdict = 'COMPILATION ERROR';
+351:      else if (testResult.status === 'runtime_error') finalVerdict = 'RUNTIME ERROR';
+352:      else if (testResult.status === 'time_limit_exceeded') finalVerdict = 'TIME LIMIT EXCEEDED';
+353:      else if (testResult.status === 'wrong_answer') finalVerdict = 'INCORRECT ANSWER';
+354:      else if (testResult.status === 'success') finalVerdict = 'CORRECT ANSWER';
+355:      else if (testResult.status === 'error') finalVerdict = 'EVALUATION UNAVAILABLE';
+356:   }
+357:   
+358:   const correctness = totalCount > 0 ? Number(((passedCount / totalCount) * 100).toFixed(2)) + '%' : '0%';
+359:   const failedCount = Math.max(0, totalCount - passedCount);
+360: 
+361:   let mappedVerdict = 'error';
+362:   if (finalVerdict === 'CORRECT ANSWER') mappedVerdict = 'correct';
+363:   else if (finalVerdict === 'INCORRECT ANSWER' || finalVerdict === 'RUNTIME ERROR' || finalVerdict === 'COMPILATION ERROR' || finalVerdict === 'TIME LIMIT EXCEEDED') mappedVerdict = 'incorrect';
+364: 
+365:   let failedTestCaseInfo = '';
+366:   if (testResult && testResult.results) {
+367:     const failedTest = testResult.results.find(r => !r.passed);
+368:     if (failedTest) {
+369:       failedTestCaseInfo = `\nFailed Test Case:\nInput: ${failedTest.input || 'Unavailable'}\nExpected Output: ${failedTest.expectedOutput || 'Unavailable'}\nActual Output: ${failedTest.actualOutput || 'Unavailable'}`;
+370:     }
+371:   }
+372: 
+373:   const fallback = {
+374:     verdict: mappedVerdict,
+375:     summary: finalVerdict,
+376:     correctness,
+377:     passedCount,
+378:     failedCount,
+379:     timeComplexity: "Unknown",
+380:     spaceComplexity: "Unknown",
+381:     logicAnalysis: "AI REVIEW TEMPORARILY UNAVAILABLE",
+382:     codeQuality: "Unknown",
+383:     edgeCaseAnalysis: "Unknown",
+384:     userApproach: "Unknown",
+385:     expectedApproach: "Unknown",
+386:     difference: "Unknown",
+387:     mistakeLocation: "Unknown",
+388:     mistakeExplanation: "Unknown",
+389:     improvementSuggestions: "Please try again later.",
+390:     correctedCode: null,
+391:     learningTopics: "Unknown",
+392:     reviewStatus: "error",
+393:     errorMessage: "AI review service is temporarily unavailable."
+394:   };
+395: 
+396:   if (!genAI || finalVerdict === 'EVALUATION UNAVAILABLE') {
+397:     return fallback;
+398:   }
+399: 
+400:   const MAX_RETRIES = 3;
+401:   let attempt = 0;
+402:   let lastErrorMsg = '';
+403:   let modelName = process.env.GEMINI_MODEL || 'gemini-3.7-flash';
+404: 
+405:   while (attempt < MAX_RETRIES) {
+406:     try {
+407:       const model = genAI.getGenerativeModel({ model: modelName });
+408:       const prompt = `You are an expert Senior Software Engineer conducting a code review.
+409: Evaluate the submitted solution. DO NOT output verdict or correctness; focus on complexity and logic.
+410: 
+411: Problem: "${problemTitle}"
+412: Description: "${problemDescription}"
+413: Input Format: "${inputFormat || 'N/A'}"
+414: Output Format: "${outputFormat || 'N/A'}"
+415: 
+416: Candidate Code:
+417: \`\`\`${language}
+418: ${code}
+419: \`\`\`
+420: 
+421: Execution Results:
+422: Verdict: ${finalVerdict}
+423: Passed: ${passedCount}/${totalCount}${failedTestCaseInfo}
+424: ${testResult?.compileError ? `\nCompilation Error:\n${testResult.compileError}` : ''}
+425: ${testResult?.runtimeError ? `\nRuntime Error:\n${testResult.runtimeError}` : ''}
+426: 
+427: Generate a concise, constructive code review in valid JSON format ONLY. Ensure your JSON strictly matches the following structure:
+428: {
+429:   "timeComplexity": "O(n) / Unknown (analyze from code)",
+430:   "spaceComplexity": "O(n) / Unknown (analyze from code)",
+431:   "logicAnalysis": "Analysis of the candidate's core logic. Why it works or why it fails.",
+432:   "userApproach": "What strategy did the candidate attempt?",
+433:   "expectedApproach": "What is the optimal algorithmic approach?",
+434:   "difference": "What is the difference between their approach and the optimal one?",
+435:   "mistakeLocation": "Exactly where the mistake is in the code (if incorrect, compile error, or runtime error) or 'None' (if correct).",
+436:   "mistakeExplanation": "Why the mistake causes a failure (if incorrect), explain the compile/runtime error, or 'N/A' (if correct). Use beginner-friendly language.",
+437:   "improvementSuggestions": "Specific actionable steps to improve. (e.g. concepts to revise, logic to change, edge cases to test)",
+438:   "correctedCode": "Provide a clean, optimized, fully working solution in the same language. Explain changes in comments. (string)",
+439:   "codeQuality": "Feedback on code readability and structure.",
+440:   "edgeCaseAnalysis": "How does it handle edge cases? Did it miss any?",
+441:   "learningTopics": "Relevant DSA concepts or suggested next learning topics."
+442: }`;
+443: 
+444:       // Set timeout for request
+445:       const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000));
+446:       const result = await Promise.race([model.generateContent(prompt), timeoutPromise]);
+447:       let text = result.response.text();
+448:       text = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
+449:       const parsed = JSON.parse(text);
+450:       
+451:       return {
+452:         verdict: mappedVerdict,
+453:         summary: finalVerdict,
+454:         correctness,
+455:         passedCount,
+456:         failedCount,
+457:         timeComplexity: parsed.timeComplexity || 'Unknown',
+458:         spaceComplexity: parsed.spaceComplexity || 'Unknown',
+459:         logicAnalysis: parsed.logicAnalysis || 'Unknown',
+460:         codeQuality: parsed.codeQuality || 'Unknown',
+461:         edgeCaseAnalysis: parsed.edgeCaseAnalysis || 'Unknown',
+462:         userApproach: parsed.userApproach || 'Unknown',
+463:         expectedApproach: parsed.expectedApproach || 'Unknown',
+464:         difference: parsed.difference || 'Unknown',
+465:         mistakeLocation: parsed.mistakeLocation || 'Unknown',
+466:         mistakeExplanation: parsed.mistakeExplanation || 'Unknown',
+467:         improvementSuggestions: parsed.improvementSuggestions || 'Unknown',
+468:         correctedCode: parsed.correctedCode || null,
+469:         learningTopics: parsed.learningTopics || 'Unknown',
+470:         reviewStatus: "success",
+471:         errorMessage: null,
+472:         reviewSource: "ai"
+473:       };
+474:     } catch (err) {
+475:       const errMsg = err?.message || String(err);
+476:       lastErrorMsg = errMsg;
+477:       console.error(`[AI Engine] Code Evaluation error (attempt ${attempt + 1}):`, errMsg);
+478: 
+479:       if (errMsg.includes('429') || errMsg.includes('Quota') || errMsg.includes('503') || errMsg.includes('500') || errMsg.includes('timeout')) {
+480:         attempt++;
+481:         if (attempt < MAX_RETRIES) {
+482:           const delay = Math.pow(2, attempt) * 1000;
+483:           await new Promise(res => setTimeout(res, delay));
+484:           continue; // Retry
+485:         }
+486:       } else {
+487:         // Break out of loop immediately for 400, 401, 403, 404, or unrecoverable error
+488:         break;
+489:       }
+490:     }
+491:   }
+492: 
+493:   // Fallback Logic
+494:   let errorCategory = 'AI review service is temporarily unavailable.';
+495:   let reviewStatus = 'error';
+496:   let httpStatus = 'Unknown';
+497: 
+498:   if (lastErrorMsg.includes('400')) { errorCategory = 'AI Request/Configuration Issue (400).'; httpStatus = '400'; }
+499:   else if (lastErrorMsg.includes('401') || lastErrorMsg.includes('403')) { errorCategory = 'AI Authentication/Permission Issue.'; httpStatus = lastErrorMsg.includes('401'
+The above content was truncated because individual lines are very long. Only a portion of the content is shown.
