@@ -327,4 +327,167 @@ router.post('/colleges/:collegeId/hr', async (req, res) => {
   }
 });
 
+// 6. DETAILED SUMMARY OF ALL COLLEGES WITH COUNTS
+router.get('/colleges-summary', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        c.id, c.name, c.code, c.domain, c.status, c.created_at,
+        COUNT(DISTINCT CASE WHEN cu.system_role = 'STUDENT' AND cu.status = 'ACTIVE' THEN cu.id END) AS student_count,
+        COUNT(DISTINCT CASE WHEN cu.system_role = 'TUTOR' AND cu.status = 'ACTIVE' THEN cu.id END) AS tutor_count,
+        COUNT(DISTINCT CASE WHEN cu.system_role = 'HR' AND cu.status = 'ACTIVE' THEN cu.id END) AS hr_count,
+        COUNT(DISTINCT b.id) AS batch_count
+      FROM colleges c
+      LEFT JOIN campus_users cu ON c.id = cu.college_id
+      LEFT JOIN batches b ON c.id = b.college_id
+      GROUP BY c.id, c.name, c.code, c.domain, c.status, c.created_at
+      ORDER BY c.name
+    `);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('[colleges-summary] error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// 7. LIST ALL PROVISIONED HR ACCOUNTS
+router.get('/hrs', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        cu.id as campus_user_id,
+        cu.user_id,
+        cu.college_id,
+        cu.status,
+        cu.created_at,
+        u.full_name,
+        u.email,
+        c.name as college_name,
+        c.code as college_code
+      FROM campus_users cu
+      JOIN users u ON cu.user_id = u.id
+      JOIN colleges c ON cu.college_id = c.id
+      WHERE cu.system_role = 'HR'
+      ORDER BY cu.created_at DESC
+    `);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('[registrar/hrs] error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// 8. LIST ALL TEACHERS (TUTORS) ACROSS COLLEGES
+router.get('/teachers', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        cu.id as campus_user_id,
+        cu.user_id,
+        cu.college_id,
+        cu.status,
+        cu.created_at,
+        u.full_name,
+        u.email,
+        c.name as college_name,
+        c.code as college_code
+      FROM campus_users cu
+      JOIN users u ON cu.user_id = u.id
+      JOIN colleges c ON cu.college_id = c.id
+      WHERE cu.system_role = 'TUTOR'
+      ORDER BY cu.created_at DESC
+    `);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('[registrar/teachers] error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// 9. PROVISION TEACHER DIRECTLY (SUPER ADMIN)
+router.post('/provision-teacher', async (req, res) => {
+  const { collegeId, full_name, email, password } = req.body;
+  if (!collegeId || !full_name || !email || !password) {
+    return res.status(400).json({ error: 'College, full name, email, and password are required' });
+  }
+
+  try {
+    const colRes = await pool.query('SELECT id, name, code FROM colleges WHERE id = $1', [collegeId]);
+    if (colRes.rows.length === 0) return res.status(404).json({ error: 'College not found' });
+    const college = colRes.rows[0];
+
+    const cleanEmail = email.trim().toLowerCase();
+    let userRes = await pool.query('SELECT id FROM users WHERE LOWER(email) = $1', [cleanEmail]);
+    let userId;
+
+    if (userRes.rows.length > 0) {
+      userId = userRes.rows[0].id;
+      const hash = await bcrypt.hash(password, 10);
+      await pool.query(
+        'UPDATE users SET password_hash = $1, full_name = COALESCE($2, full_name) WHERE id = $3',
+        [hash, full_name.trim(), userId]
+      );
+    } else {
+      const hash = await bcrypt.hash(password, 10);
+      const newU = await pool.query(
+        'INSERT INTO users (email, password_hash, full_name, college_email, college_email_verified) VALUES ($1, $2, $3, $1, TRUE) RETURNING id',
+        [cleanEmail, hash, full_name.trim()]
+      );
+      userId = newU.rows[0].id;
+    }
+
+    const checkCu = await pool.query(
+      'SELECT id FROM campus_users WHERE user_id = $1 AND college_id = $2',
+      [userId, collegeId]
+    );
+
+    if (checkCu.rows.length > 0) {
+      await pool.query(
+        "UPDATE campus_users SET system_role = 'TUTOR', status = 'ACTIVE', updated_at = NOW() WHERE id = $1",
+        [checkCu.rows[0].id]
+      );
+    } else {
+      await pool.query(
+        "INSERT INTO campus_users (user_id, college_id, system_role, status) VALUES ($1, $2, 'TUTOR', 'ACTIVE')",
+        [userId, collegeId]
+      );
+    }
+
+    res.status(201).json({
+      message: `Teacher ${full_name} provisioned successfully for ${college.name}.`,
+      teacher: {
+        email: cleanEmail,
+        name: full_name,
+        college: college.name,
+        college_code: college.code
+      }
+    });
+  } catch (error) {
+    console.error('[provision-teacher] error:', error);
+    res.status(500).json({ error: error.message || 'Server error' });
+  }
+});
+
+// 10. TOGGLE ACTIVE / INACTIVE STATUS FOR ANY CAMPUS USER (TEACHER, HR, ETC.)
+router.patch('/campus-users/:campusUserId/toggle-status', async (req, res) => {
+  const { campusUserId } = req.params;
+  try {
+    const current = await pool.query('SELECT status, system_role FROM campus_users WHERE id = $1', [campusUserId]);
+    if (current.rows.length === 0) return res.status(404).json({ error: 'User record not found' });
+    const newStatus = current.rows[0].status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
+    
+    const updateRes = await pool.query(
+      'UPDATE campus_users SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
+      [newStatus, campusUserId]
+    );
+    res.json({
+      message: `Status updated to ${newStatus}`,
+      user: updateRes.rows[0]
+    });
+  } catch (error) {
+    console.error('[toggle-status] error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 export default router;

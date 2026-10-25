@@ -52,7 +52,7 @@ export function AppContent() {
     // If a user lands on 'dashboard' (or default) and is authenticated, enforce portal routing
     if ((currentPage === 'dashboard' || currentPage === '') && user) {
       if (user?.campus?.role === 'TUTOR') return <TutorDashboard initialTab="overview" onNavigate={handleNavigate} />;
-      if (user?.campus?.role === 'SUPER_ADMIN') return <RegistrarDashboard />;
+      if (user?.campus?.role === 'SUPER_ADMIN') return <RegistrarDashboard initialTab="overview" onNavigate={handleNavigate} />;
       if (user?.campus?.role === 'COLLEGE_ADMIN') return <CollegeAdminDashboard />;
       if (user?.campus?.role === 'HR') return <HRDashboard initialTab="overview" onNavigate={handleNavigate} />;
     }
@@ -86,7 +86,20 @@ export function AppContent() {
       case 'profile':
         return <Profile />;
       case 'registrar':
-        return <RegistrarDashboard />;
+      case 'registrar-overview':
+        return <RegistrarDashboard initialTab="overview" onNavigate={handleNavigate} />;
+      case 'registrar-colleges':
+        return <RegistrarDashboard initialTab="colleges" onNavigate={handleNavigate} />;
+      case 'registrar-hrs':
+        return <RegistrarDashboard initialTab="hrs" onNavigate={handleNavigate} />;
+      case 'registrar-teachers':
+        return <RegistrarDashboard initialTab="teachers" onNavigate={handleNavigate} />;
+      case 'registrar-departments':
+        return <RegistrarDashboard initialTab="departments" onNavigate={handleNavigate} />;
+      case 'registrar-batches':
+        return <RegistrarDashboard initialTab="batches" onNavigate={handleNavigate} />;
+      case 'registrar-admins':
+        return <RegistrarDashboard initialTab="admins" onNavigate={handleNavigate} />;
       case 'college-admin':
         return <CollegeAdminDashboard />;
       case 'tutor':

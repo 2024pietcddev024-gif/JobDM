@@ -81,7 +81,7 @@ export const authenticateOptional = (req, res, next) => {
 };
 
 router.post('/register', async (req, res) => {
-  const { name, email, password } = req.body;
+  const { name, email, password, college_code } = req.body;
   if (!name || !email || !password) {
     return res.status(400).json({ error: 'Name, email, and password are required' });
   }
@@ -99,17 +99,55 @@ router.post('/register', async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const password_hash = await bcrypt.hash(password, salt);
 
+    // Detect if email domain belongs to an active registered college or college_code provided
+    const emailParts = cleanEmail.split('@');
+    const emailDomain = emailParts.length > 1 ? emailParts[1].toLowerCase() : null;
+    const genericDomains = ['gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com', 'icloud.com', 'gmil.com'];
+    
+    let matchedCollege = null;
+    if (college_code && college_code.trim()) {
+      const colRes = await pool.query('SELECT id, name, domain, status FROM colleges WHERE LOWER(code) = LOWER($1)', [college_code.trim()]);
+      if (colRes.rows.length > 0 && colRes.rows[0].status === 'ACTIVE') {
+        matchedCollege = colRes.rows[0];
+      }
+    } else if (emailDomain && !genericDomains.includes(emailDomain)) {
+      const colRes = await pool.query('SELECT id, name, domain, status FROM colleges WHERE LOWER(domain) = $1 AND status = $2 LIMIT 1', [emailDomain, 'ACTIVE']);
+      if (colRes.rows.length > 0) {
+        matchedCollege = colRes.rows[0];
+      }
+    }
+
     const result = await pool.query(
-      `INSERT INTO users (full_name, email, personal_email, personal_email_verified, personal_email_verified_at, password_hash) 
-       VALUES ($1, $2, $2, TRUE, NOW(), $3) 
+      `INSERT INTO users (full_name, email, personal_email, personal_email_verified, personal_email_verified_at, college_email, college_email_verified, college_email_verified_at, password_hash) 
+       VALUES ($1, $2, $2, TRUE, NOW(), $3, $4, $5, $6) 
        RETURNING *`,
-      [name, cleanEmail, password_hash]
+      [
+        name, 
+        cleanEmail, 
+        matchedCollege ? cleanEmail : null,
+        Boolean(matchedCollege),
+        matchedCollege ? new Date() : null,
+        password_hash
+      ]
     );
 
     const user = result.rows[0];
-    const token = generateToken(user);
+
+    // If matched with an active college, automatically register user as STUDENT of that college
+    if (matchedCollege) {
+      await pool.query(
+        "INSERT INTO campus_users (user_id, college_id, system_role, status) VALUES ($1, $2, 'STUDENT', 'ACTIVE') ON CONFLICT (user_id, college_id) DO NOTHING",
+        [user.id, matchedCollege.id]
+      );
+    }
+
+    const token = generateToken(user, matchedCollege?.id || null);
     
-    res.status(201).json({ user: formatUser(user), token });
+    res.status(201).json({ 
+      user: formatUser(user), 
+      token,
+      college: matchedCollege ? { id: matchedCollege.id, name: matchedCollege.name } : null
+    });
   } catch (error) {
     console.error('[auth/register] error:', error);
     if (error.code === '23505') {
@@ -157,36 +195,40 @@ router.post('/login', async (req, res) => {
 
     if (college_code) {
       // Verify college exists
-      const colRes = await pool.query('SELECT id FROM colleges WHERE code = $1', [college_code]);
+      const colRes = await pool.query('SELECT id, status FROM colleges WHERE LOWER(code) = LOWER($1)', [college_code.trim()]);
       if (colRes.rows.length === 0) return res.status(400).json({ error: 'Invalid College Code' });
+      if (colRes.rows[0].status !== 'ACTIVE') {
+        return res.status(403).json({ error: 'This College/Company account is currently inactive. Please contact your administrator.' });
+      }
       activeCollegeId = colRes.rows[0].id;
 
       // Verify user membership in this college
       const roleRes = await pool.query(
-        "SELECT system_role FROM campus_users WHERE user_id = $1 AND college_id = $2 AND status = 'ACTIVE'",
+        "SELECT system_role, status FROM campus_users WHERE user_id = $1 AND college_id = $2",
         [user.id, activeCollegeId]
       );
 
-      if (roleRes.rows.length === 0) {
+      if (roleRes.rows.length === 0 || roleRes.rows[0].status !== 'ACTIVE') {
         return res.status(403).json({ error: 'Unauthorized: No active affiliation with this college' });
       }
 
       if (normalizedPanel === 'hr' && roleRes.rows[0].system_role !== 'HR') {
         return res.status(403).json({ error: 'Unauthorized: No HR access for this college' });
       }
-      if (normalizedPanel === 'tutor' && roleRes.rows[0].system_role !== 'TUTOR') {
-        return res.status(403).json({ error: 'Unauthorized: No Tutor access for this college' });
+      if ((normalizedPanel === 'tutor' || normalizedPanel === 'teacher') && roleRes.rows[0].system_role !== 'TUTOR') {
+        return res.status(403).json({ error: 'Unauthorized: No Teacher access for this college' });
       }
     } else if (normalizedPanel === 'hr') {
-      return res.status(400).json({ error: 'College Code is required for HR login' });
-    } else if (normalizedPanel === 'tutor') {
+      return res.status(400).json({ error: 'College / Company Code is required for HR login' });
+    } else if (normalizedPanel === 'tutor' || normalizedPanel === 'teacher') {
       const tutorRoleRes = await pool.query(
         "SELECT college_id FROM campus_users WHERE user_id = $1 AND system_role = 'TUTOR' AND status = 'ACTIVE' ORDER BY created_at DESC LIMIT 1",
         [user.id]
       );
-      if (tutorRoleRes.rows.length > 0) {
-        activeCollegeId = tutorRoleRes.rows[0].college_id;
+      if (tutorRoleRes.rows.length === 0) {
+        return res.status(403).json({ error: 'Access Denied: Your account does not have active Teacher privileges.' });
       }
+      activeCollegeId = tutorRoleRes.rows[0].college_id;
     } else {
       const generalRoleRes = await pool.query(
         "SELECT college_id FROM campus_users WHERE user_id = $1 AND status = 'ACTIVE' ORDER BY created_at DESC LIMIT 1",

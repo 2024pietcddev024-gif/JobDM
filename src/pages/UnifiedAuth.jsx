@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Mail, Lock, User as UserIcon, ArrowRight, ArrowLeft, Eye, EyeOff, Users, Briefcase } from 'lucide-react';
+import { Mail, Lock, User as UserIcon, ArrowRight, ArrowLeft, Eye, EyeOff, Users, Briefcase, ShieldCheck } from 'lucide-react';
 
 export default function UnifiedAuth({ initialMode, onNavigate }) {
   const { login, signup } = useAuth();
@@ -74,6 +74,26 @@ export default function UnifiedAuth({ initialMode, onNavigate }) {
         iconBg: 'bg-amber-500/20',
         iconBorder: 'border-indigo-300 dark:border-indigo-500/20'
       }
+    },
+    {
+      id: 'admin',
+      title: 'Super Admin',
+      desc: 'Master platform management, college onboarding, and licensing.',
+      icon: ShieldCheck,
+      color: 'purple',
+      classes: {
+        bg: 'bg-purple-600',
+        hoverBg: 'hover:bg-purple-500',
+        text: 'text-purple-600 dark:text-purple-400',
+        border: 'border-purple-300 dark:border-purple-500/20',
+        hoverBorder: 'hover:border-purple-300 dark:border-purple-500/20',
+        glow: 'bg-purple-600/10',
+        cardGlow: 'shadow-[0_0_20px_rgba(147,51,234,0.3)]',
+        bgSubtle: 'bg-purple-500/5',
+        hoverBgSubtle: 'hover:bg-purple-500/10',
+        iconBg: 'bg-purple-500/20',
+        iconBorder: 'border-purple-300 dark:border-purple-500/20'
+      }
     }
   ];
 
@@ -98,9 +118,9 @@ export default function UnifiedAuth({ initialMode, onNavigate }) {
     
     let result;
     if (mode === 'login') {
-      result = await login(email.trim(), password, selectedPanel, collegeCode.trim());
+      result = await login(email.trim(), password, selectedPanel, collegeCode.trim() || null);
     } else {
-      result = await signup(name.trim(), email.trim(), password);
+      result = await signup(name.trim(), email.trim(), password, collegeCode.trim() || null);
     }
 
     if (result && !result.success) {
@@ -124,7 +144,7 @@ export default function UnifiedAuth({ initialMode, onNavigate }) {
         <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-indigo-600/10 rounded-full blur-[100px] pointer-events-none" />
         <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-emerald-600/10 rounded-full blur-[100px] pointer-events-none" />
 
-        <div className="max-w-5xl w-full relative z-10">
+        <div className="max-w-7xl w-full relative z-10">
           <div className="text-center mb-10">
             <h1 className="text-4xl md:text-5xl font-extrabold text-slate-900 dark:text-white font-['Outfit'] mb-4">
               Select Your Portal
@@ -134,11 +154,18 @@ export default function UnifiedAuth({ initialMode, onNavigate }) {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             {panels.map((p) => {
               const Icon = p.icon;
               return (
-                <div key={p.id} onClick={() => setSelectedPanel(p.id)} className={`glass-card rounded-3xl p-8 border ${p.classes.border} ${p.classes.hoverBorder} transition-all flex flex-col items-center text-center cursor-pointer group ${p.classes.bgSubtle} ${p.classes.hoverBgSubtle}`}>
+                <div 
+                  key={p.id} 
+                  onClick={() => {
+                    setSelectedPanel(p.id);
+                    if (p.id !== 'student') setMode('login');
+                  }} 
+                  className={`glass-card rounded-3xl p-8 border ${p.classes.border} ${p.classes.hoverBorder} transition-all flex flex-col items-center text-center cursor-pointer group ${p.classes.bgSubtle} ${p.classes.hoverBgSubtle}`}
+                >
                   <div className={`w-20 h-20 rounded-2xl ${p.classes.iconBg} flex items-center justify-center mb-6 group-hover:scale-110 transition-transform`}>
                     <Icon className={`w-10 h-10 ${p.classes.text}`} />
                   </div>
@@ -183,19 +210,27 @@ export default function UnifiedAuth({ initialMode, onNavigate }) {
           <div className={`w-16 h-16 rounded-2xl ${config.classes.iconBg} flex items-center justify-center mx-auto mb-4 border ${config.classes.iconBorder}`}>
             <Icon className={`w-8 h-8 ${config.classes.text}`} />
           </div>
-          <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2 font-['Outfit']">{mode === 'login' ? config.title : 'Create Account'}</h2>
+          <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2 font-['Outfit']">
+            {mode === 'login' || selectedPanel !== 'student' ? config.title : 'Create Account'}
+          </h2>
           <p className="text-sm text-slate-600 dark:text-slate-400">
-            {mode === 'login' ? `Sign in to your ${config.title.toLowerCase()}` : `Create a new account`}
+            {mode === 'login' || selectedPanel !== 'student' ? `Sign in to your ${config.title.toLowerCase()}` : `Create a new account`}
           </p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {mode === 'signup' && selectedPanel !== 'student' ? (
-            <div className="py-8 text-center text-slate-700 dark:text-slate-300">
-              <p className="mb-4 text-sm font-medium">
-                {selectedPanel === 'teacher' ? 'Teacher' : 'HR'} account registration is currently by invitation only. 
-                Please contact your administrator to provision an account.
+            <div className="py-6 text-center text-slate-700 dark:text-slate-300 space-y-4">
+              <p className="text-sm font-medium">
+                {selectedPanel === 'teacher' ? 'Teacher' : selectedPanel === 'hr' ? 'HR' : 'Super Admin'} accounts are provisioned by invitation only.
               </p>
+              <button
+                type="button"
+                onClick={() => setMode('login')}
+                className={`w-full py-3 rounded-xl text-white font-bold text-sm transition-all flex items-center justify-center gap-2 ${config.classes.bg} ${config.classes.hoverBg}`}
+              >
+                Sign In to {config.title}
+              </button>
             </div>
           ) : (
             <>
@@ -241,6 +276,28 @@ export default function UnifiedAuth({ initialMode, onNavigate }) {
                 </div>
               </div>
 
+              {mode === 'signup' && selectedPanel === 'student' && (
+                <div>
+                  <div className="flex justify-between items-center mb-1.5">
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                      College / Institute Code
+                    </label>
+                    <span className="text-[10px] text-slate-500">Optional</span>
+                  </div>
+                  <div className="relative">
+                    <Briefcase className="w-4 h-4 text-slate-600 dark:text-slate-400 absolute left-3.5 top-3" />
+                    <input
+                      type="text"
+                      value={collegeCode}
+                      onChange={(e) => setCollegeCode(e.target.value)}
+                      placeholder="e.g. PIET-2026 (or sign up with your college email)"
+                      className="w-full pl-10 pr-4 py-2.5 rounded-xl glass-input text-sm"
+                    />
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-1">If your college provided a code, enter it here. College domain emails (@college.edu) link automatically.</p>
+                </div>
+              )}
+
               {mode === 'login' && selectedPanel === 'hr' && (
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
@@ -253,7 +310,28 @@ export default function UnifiedAuth({ initialMode, onNavigate }) {
                       required
                       value={collegeCode}
                       onChange={(e) => setCollegeCode(e.target.value)}
-                      placeholder="e.g. TCS-001"
+                      placeholder="e.g. ORG-317GGL or PIET-2026"
+                      className="w-full pl-10 pr-4 py-2.5 rounded-xl glass-input text-sm"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {mode === 'login' && selectedPanel === 'teacher' && (
+                <div>
+                  <div className="flex justify-between items-center mb-1.5">
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                      College Code
+                    </label>
+                    <span className="text-[10px] text-slate-500">Optional</span>
+                  </div>
+                  <div className="relative">
+                    <Briefcase className="w-4 h-4 text-slate-600 dark:text-slate-400 absolute left-3.5 top-3" />
+                    <input
+                      type="text"
+                      value={collegeCode}
+                      onChange={(e) => setCollegeCode(e.target.value)}
+                      placeholder="e.g. ORG-317GGL"
                       className="w-full pl-10 pr-4 py-2.5 rounded-xl glass-input text-sm"
                     />
                   </div>
@@ -296,25 +374,27 @@ export default function UnifiedAuth({ initialMode, onNavigate }) {
           )}
         </form>
 
-        <div className="mt-6 text-center text-xs text-slate-600 dark:text-slate-400">
-          {mode === 'login' ? (
-            <p>
-              Don't have an account?{' '}
-              <button onClick={toggleMode} className={`${config.classes.text} font-bold hover:underline`}>
-                Sign Up
-              </button>
-            </p>
-          ) : (
-            <div className="space-y-2">
+        {selectedPanel === 'student' && (
+          <div className="mt-6 text-center text-xs text-slate-600 dark:text-slate-400">
+            {mode === 'login' ? (
               <p>
-                Already have an account?{' '}
+                Don't have an account?{' '}
                 <button onClick={toggleMode} className={`${config.classes.text} font-bold hover:underline`}>
-                  Sign In
+                  Sign Up
                 </button>
               </p>
-            </div>
-          )}
-        </div>
+            ) : (
+              <div className="space-y-2">
+                <p>
+                  Already have an account?{' '}
+                  <button onClick={toggleMode} className={`${config.classes.text} font-bold hover:underline`}>
+                    Sign In
+                  </button>
+                </p>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

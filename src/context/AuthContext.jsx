@@ -98,13 +98,16 @@ export const AuthProvider = ({ children }) => {
          const actualRole = normalizedUser.campus?.role || 'STUDENT';
          let isAuthorized = false;
          
-         if (expectedRole === 'student' && (!normalizedUser.campus?.role || actualRole === 'STUDENT')) isAuthorized = true;
+         // SUPER_ADMIN has master authority across all portals
+         if (actualRole === 'SUPER_ADMIN') isAuthorized = true;
+         else if (expectedRole === 'admin' && (actualRole === 'SUPER_ADMIN' || actualRole === 'COLLEGE_ADMIN')) isAuthorized = true;
+         else if (expectedRole === 'student' && (!normalizedUser.campus?.role || actualRole === 'STUDENT')) isAuthorized = true;
          else if (expectedRole === 'teacher' && actualRole === 'TUTOR') isAuthorized = true;
          else if (expectedRole === 'hr' && actualRole === 'HR') isAuthorized = true;
          
          if (!isAuthorized) {
            localStorage.removeItem('interviewiq_token');
-           let roleName = expectedRole === 'student' ? 'Student' : expectedRole === 'teacher' ? 'Teacher' : 'HR';
+           let roleName = expectedRole === 'student' ? 'Student' : expectedRole === 'teacher' ? 'Teacher' : expectedRole === 'hr' ? 'HR' : 'Admin';
            return { success: false, error: `Access denied: Your account does not have ${roleName} privileges.` };
          }
       }
@@ -123,12 +126,15 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const signup = async (name, email, password) => {
+  const signup = async (name, email, password, collegeCode = null) => {
     try {
+      const payload = { name, email, password };
+      if (collegeCode) payload.college_code = collegeCode;
+
       const res = await fetch(`${API_URL}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password })
+        body: JSON.stringify(payload)
       });
       
       const data = await res.json().catch(() => null);
@@ -137,6 +143,17 @@ export const AuthProvider = ({ children }) => {
       }
 
       localStorage.setItem('interviewiq_token', data.token);
+
+      try {
+        const campRes = await fetch(`${API_URL}/campus/me`, {
+          headers: { Authorization: `Bearer ${data.token}` }
+        });
+        if (campRes.ok) {
+          const campData = await campRes.json();
+          data.user.campus = campData.campus;
+        }
+      } catch (e) {}
+
       setUser(normaliseUser(data.user));
       setIsAuthenticated(true);
       setIsAuthModalOpen(false);

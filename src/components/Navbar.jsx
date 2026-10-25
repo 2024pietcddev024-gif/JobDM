@@ -30,7 +30,7 @@ export default function Navbar({ onNavigate, currentPage, toggleSidebar, isSideb
       </div>
 
       <div className="flex items-center gap-3">
-        {user?.campus?.role !== 'TUTOR' && (
+        {(!user?.campus?.role || user?.campus?.role === 'STUDENT') && (
           <>
             <button onClick={() => onNavigate('new-interview')}
               className="hidden sm:flex items-center gap-2 px-4 py-2 rounded-xl glow-btn text-white font-semibold text-sm transition-all">
@@ -43,6 +43,25 @@ export default function Navbar({ onNavigate, currentPage, toggleSidebar, isSideb
               <span>{user?.streakDays || user?.streak_days || 0} Day Streak</span>
             </div>
           </>
+        )}
+
+        {user?.campus?.role === 'SUPER_ADMIN' && (
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-700 dark:text-purple-300 font-bold text-xs shadow-sm">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span>Master Super Admin</span>
+          </div>
+        )}
+
+        {user?.campus?.role === 'HR' && (
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 font-bold text-xs shadow-sm">
+            <span>Corporate Recruiter</span>
+          </div>
+        )}
+
+        {user?.campus?.role === 'TUTOR' && (
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 font-bold text-xs shadow-sm">
+            <span>Faculty Portal</span>
+          </div>
         )}
 
         <button 

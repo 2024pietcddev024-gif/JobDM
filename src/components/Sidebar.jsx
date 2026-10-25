@@ -10,7 +10,17 @@ export default function Sidebar({ currentPage, onNavigate, isSidebarOpen }) {
   const { user } = useAuth();
   let menuItems = [];
 
-  if (user?.campus?.role === 'TUTOR') {
+  if (user?.campus?.role === 'SUPER_ADMIN') {
+    menuItems = [
+      { id: 'registrar-overview', label: 'Platform Overview', icon: LayoutDashboard },
+      { id: 'registrar-colleges', label: 'Colleges & Licenses', icon: Building2, badge: 'Clients' },
+      { id: 'registrar-hrs', label: 'HR & Companies', icon: Briefcase, badge: 'Partners' },
+      { id: 'registrar-teachers', label: 'Faculty & Teachers', icon: Users },
+      { id: 'registrar-departments', label: 'Departments', icon: BookOpen },
+      { id: 'registrar-batches', label: 'Batches', icon: Calendar },
+      { id: 'registrar-admins', label: 'College Admins', icon: ShieldCheck }
+    ];
+  } else if (user?.campus?.role === 'TUTOR') {
     menuItems = [
       { id: 'teacher-dashboard', label: 'Overview', icon: LayoutDashboard },
       { id: 'teacher-batches', label: 'My Batches', icon: Building2 },
@@ -39,10 +49,6 @@ export default function Sidebar({ currentPage, onNavigate, isSidebarOpen }) {
       { id: 'profile', label: 'My Profile', icon: User }
     ];
 
-    if (user?.campus?.role === 'SUPER_ADMIN') {
-      menuItems.push({ id: 'registrar', label: 'Registrar', icon: ShieldCheck, badge: 'Admin' });
-    }
-
     if (user?.campus?.role === 'COLLEGE_ADMIN') {
       menuItems.push({ id: 'college-admin', label: 'College Admin', icon: Building2, badge: 'Admin' });
     }
@@ -61,7 +67,8 @@ export default function Sidebar({ currentPage, onNavigate, isSidebarOpen }) {
         </p>
         {menuItems.map((item) => {
           const Icon = item.icon;
-          const isActive = currentPage === item.id;
+          const isActive = currentPage === item.id || 
+            ((currentPage === 'dashboard' || currentPage === 'registrar') && item.id === 'registrar-overview');
 
           return (
             <button
@@ -92,7 +99,17 @@ export default function Sidebar({ currentPage, onNavigate, isSidebarOpen }) {
       </div>
 
       {/* Footer Banner */}
-      {user?.campus?.role === 'TUTOR' ? (
+      {user?.campus?.role === 'SUPER_ADMIN' ? (
+        <div className="p-3.5 rounded-2xl bg-gradient-to-br from-purple-50 to-indigo-50 dark:from-purple-950/40 dark:to-indigo-950/40 border border-purple-200 dark:border-purple-800/40 shadow-sm">
+          <div className="flex items-center gap-2 mb-1.5">
+            <ShieldCheck className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+            <span className="text-xs font-bold text-slate-900 dark:text-white">Master Admin Control</span>
+          </div>
+          <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+            Full authority over institution licensing, campus onboarding & enterprise HR provisioning.
+          </p>
+        </div>
+      ) : user?.campus?.role === 'TUTOR' ? (
         <div className="p-3.5 rounded-2xl bg-gradient-to-br from-indigo-50 to-blue-50 dark:from-indigo-900/40 dark:to-indigo-900/20 border border-indigo-100 dark:border-indigo-500/20 shadow-sm">
           <div className="flex items-center gap-2 mb-1.5">
             <BookOpen className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
