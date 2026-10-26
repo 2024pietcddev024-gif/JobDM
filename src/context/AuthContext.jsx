@@ -65,7 +65,8 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (email, password, expectedRole = null, collegeCode = null) => {
     try {
-      const payload = { email, password, panel: expectedRole };
+      const payload = { email, password };
+      if (expectedRole) payload.panel = expectedRole;
       if (collegeCode) payload.college_code = collegeCode;
 
       const res = await fetch(`${API_URL}/auth/login`, {
@@ -92,30 +93,11 @@ export const AuthProvider = ({ children }) => {
       } catch (e) {}
 
       const normalizedUser = normaliseUser(data.user);
-      
-      // Perform strict UI role validation if expectedRole is provided
-      if (expectedRole) {
-         const actualRole = normalizedUser.campus?.role || 'STUDENT';
-         let isAuthorized = false;
-         
-         // SUPER_ADMIN has master authority across all portals
-         if (actualRole === 'SUPER_ADMIN') isAuthorized = true;
-         else if (expectedRole === 'admin' && (actualRole === 'SUPER_ADMIN' || actualRole === 'COLLEGE_ADMIN')) isAuthorized = true;
-         else if (expectedRole === 'student' && (!normalizedUser.campus?.role || actualRole === 'STUDENT')) isAuthorized = true;
-         else if (expectedRole === 'teacher' && actualRole === 'TUTOR') isAuthorized = true;
-         else if (expectedRole === 'hr' && actualRole === 'HR') isAuthorized = true;
-         
-         if (!isAuthorized) {
-           localStorage.removeItem('interviewiq_token');
-           let roleName = expectedRole === 'student' ? 'Student' : expectedRole === 'teacher' ? 'Teacher' : expectedRole === 'hr' ? 'HR' : 'Admin';
-           return { success: false, error: `Access denied: Your account does not have ${roleName} privileges.` };
-         }
-      }
 
       setUser(normalizedUser);
       setIsAuthenticated(true);
       setIsAuthModalOpen(false);
-      return { success: true };
+      return { success: true, user: normalizedUser };
     } catch (err) {
       console.error(err);
       let errorMessage = err.message;
@@ -126,10 +108,11 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const signup = async (name, email, password, collegeCode = null) => {
+  const signup = async (name, email, password, collegeCode = null, role = 'student') => {
     try {
       const payload = { name, email, password };
       if (collegeCode) payload.college_code = collegeCode;
+      if (role) payload.role = role;
 
       const res = await fetch(`${API_URL}/auth/register`, {
         method: 'POST',
@@ -154,10 +137,11 @@ export const AuthProvider = ({ children }) => {
         }
       } catch (e) {}
 
-      setUser(normaliseUser(data.user));
+      const normalizedUser = normaliseUser(data.user);
+      setUser(normalizedUser);
       setIsAuthenticated(true);
       setIsAuthModalOpen(false);
-      return { success: true };
+      return { success: true, user: normalizedUser };
     } catch (err) {
       console.error(err);
       let errorMessage = err.message;

@@ -27,20 +27,59 @@ import LandingPage from './pages/LandingPage';
 import UnifiedAuth from './pages/UnifiedAuth';
 import StudentJobs from './pages/StudentJobs';
 
+import { ShieldAlert } from 'lucide-react';
+
+export const getDashboardForRole = (role) => {
+  switch (role) {
+    case 'TUTOR':
+      return 'teacher-dashboard';
+    case 'HR':
+      return 'hr-dashboard';
+    case 'SUPER_ADMIN':
+      return 'registrar-overview';
+    case 'COLLEGE_ADMIN':
+      return 'college-admin';
+    case 'STUDENT':
+    default:
+      return 'dashboard';
+  }
+};
+
+function AccessDenied({ role, onNavigate }) {
+  return (
+    <div className="min-h-[60vh] flex flex-col items-center justify-center p-6 text-center animate-in fade-in">
+      <div className="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 flex items-center justify-center mb-4">
+        <ShieldAlert className="w-8 h-8" />
+      </div>
+      <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2 font-['Outfit']">Access Denied</h2>
+      <p className="text-sm text-slate-600 dark:text-slate-400 max-w-md mb-6">
+        You do not have permission to access this resource with your current account privileges.
+      </p>
+      <button
+        onClick={() => onNavigate(getDashboardForRole(role))}
+        className="px-6 py-2.5 rounded-xl glow-btn text-white font-semibold text-sm transition-all shadow-md shadow-indigo-600/30"
+      >
+        Go to Your Dashboard
+      </button>
+    </div>
+  );
+}
+
 export function AppContent() {
   const { user, isAuthenticated } = useAuth();
-  const [currentPage, setCurrentPage] = useState(isAuthenticated ? 'dashboard' : 'landing');
+  const [currentPage, setCurrentPage] = useState(isAuthenticated ? getDashboardForRole(user?.campus?.role) : 'landing');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [selectedReportSession, setSelectedReportSession] = useState(null);
 
   // Auto-redirect based on authentication state changes (login/logout)
   React.useEffect(() => {
-    if (isAuthenticated && (currentPage === 'landing' || currentPage.startsWith('auth-'))) {
-      setCurrentPage('dashboard');
-    } else if (!isAuthenticated && currentPage !== 'landing' && !currentPage.startsWith('auth-')) {
+    if (isAuthenticated && (currentPage === 'landing' || currentPage.startsWith('auth-') || currentPage === 'admin-login' || currentPage === 'admin')) {
+      const targetDashboard = getDashboardForRole(user?.campus?.role);
+      setCurrentPage(targetDashboard);
+    } else if (!isAuthenticated && currentPage !== 'landing' && !currentPage.startsWith('auth-') && currentPage !== 'admin-login' && currentPage !== 'admin') {
       setCurrentPage('landing');
     }
-  }, [isAuthenticated, currentPage]);
+  }, [isAuthenticated, user?.campus?.role, currentPage]);
 
   const handleNavigate = (pageId) => {
     setCurrentPage(pageId);
@@ -49,12 +88,18 @@ export function AppContent() {
   };
 
   const renderPage = () => {
+    const role = user?.campus?.role || 'STUDENT';
+    const isSuperAdmin = role === 'SUPER_ADMIN';
+    const isTeacher = role === 'TUTOR' || isSuperAdmin;
+    const isHR = role === 'HR' || isSuperAdmin;
+    const isCollegeAdmin = role === 'COLLEGE_ADMIN' || isSuperAdmin;
+
     // If a user lands on 'dashboard' (or default) and is authenticated, enforce portal routing
     if ((currentPage === 'dashboard' || currentPage === '') && user) {
-      if (user?.campus?.role === 'TUTOR') return <TutorDashboard initialTab="overview" onNavigate={handleNavigate} />;
-      if (user?.campus?.role === 'SUPER_ADMIN') return <RegistrarDashboard initialTab="overview" onNavigate={handleNavigate} />;
-      if (user?.campus?.role === 'COLLEGE_ADMIN') return <CollegeAdminDashboard />;
-      if (user?.campus?.role === 'HR') return <HRDashboard initialTab="overview" onNavigate={handleNavigate} />;
+      if (role === 'TUTOR') return <TutorDashboard initialTab="overview" onNavigate={handleNavigate} />;
+      if (role === 'SUPER_ADMIN') return <RegistrarDashboard initialTab="overview" onNavigate={handleNavigate} />;
+      if (role === 'COLLEGE_ADMIN') return <CollegeAdminDashboard />;
+      if (role === 'HR') return <HRDashboard initialTab="overview" onNavigate={handleNavigate} />;
     }
 
     switch (currentPage) {
@@ -85,50 +130,80 @@ export function AppContent() {
         return <Leaderboard />;
       case 'profile':
         return <Profile />;
+
+      // Super Admin Protected Routes
       case 'registrar':
       case 'registrar-overview':
+        if (!isSuperAdmin) return <AccessDenied role={role} onNavigate={handleNavigate} />;
         return <RegistrarDashboard initialTab="overview" onNavigate={handleNavigate} />;
       case 'registrar-colleges':
+        if (!isSuperAdmin) return <AccessDenied role={role} onNavigate={handleNavigate} />;
         return <RegistrarDashboard initialTab="colleges" onNavigate={handleNavigate} />;
       case 'registrar-hrs':
+        if (!isSuperAdmin) return <AccessDenied role={role} onNavigate={handleNavigate} />;
         return <RegistrarDashboard initialTab="hrs" onNavigate={handleNavigate} />;
       case 'registrar-teachers':
+        if (!isSuperAdmin) return <AccessDenied role={role} onNavigate={handleNavigate} />;
         return <RegistrarDashboard initialTab="teachers" onNavigate={handleNavigate} />;
       case 'registrar-departments':
+        if (!isSuperAdmin) return <AccessDenied role={role} onNavigate={handleNavigate} />;
         return <RegistrarDashboard initialTab="departments" onNavigate={handleNavigate} />;
       case 'registrar-batches':
+        if (!isSuperAdmin) return <AccessDenied role={role} onNavigate={handleNavigate} />;
         return <RegistrarDashboard initialTab="batches" onNavigate={handleNavigate} />;
       case 'registrar-admins':
+        if (!isSuperAdmin) return <AccessDenied role={role} onNavigate={handleNavigate} />;
         return <RegistrarDashboard initialTab="admins" onNavigate={handleNavigate} />;
+
+      // College Admin Protected Routes
       case 'college-admin':
+        if (!isCollegeAdmin) return <AccessDenied role={role} onNavigate={handleNavigate} />;
         return <CollegeAdminDashboard />;
+
+      // Teacher Protected Routes
       case 'tutor':
       case 'teacher-dashboard':
+        if (!isTeacher) return <AccessDenied role={role} onNavigate={handleNavigate} />;
         return <TutorDashboard initialTab="overview" onNavigate={handleNavigate} />;
       case 'teacher-batches':
+        if (!isTeacher) return <AccessDenied role={role} onNavigate={handleNavigate} />;
         return <TutorDashboard initialTab="my batches" onNavigate={handleNavigate} />;
       case 'teacher-students':
+        if (!isTeacher) return <AccessDenied role={role} onNavigate={handleNavigate} />;
         return <TutorDashboard initialTab="students" onNavigate={handleNavigate} />;
       case 'teacher-analytics':
+        if (!isTeacher) return <AccessDenied role={role} onNavigate={handleNavigate} />;
         return <TutorDashboard initialTab="analytics" onNavigate={handleNavigate} />;
       case 'teacher-profile':
+        if (!isTeacher) return <AccessDenied role={role} onNavigate={handleNavigate} />;
         return <TutorDashboard initialTab="profile" onNavigate={handleNavigate} />;
+
+      // HR Protected Routes
       case 'hr':
       case 'hr-dashboard':
+        if (!isHR) return <AccessDenied role={role} onNavigate={handleNavigate} />;
         return <HRDashboard initialTab="overview" onNavigate={handleNavigate} />;
       case 'hr-jobs':
+        if (!isHR) return <AccessDenied role={role} onNavigate={handleNavigate} />;
         return <HRDashboard initialTab="jobs" onNavigate={handleNavigate} />;
       case 'hr-candidates':
+        if (!isHR) return <AccessDenied role={role} onNavigate={handleNavigate} />;
         return <HRDashboard initialTab="candidates" onNavigate={handleNavigate} />;
       case 'hr-interviews':
+        if (!isHR) return <AccessDenied role={role} onNavigate={handleNavigate} />;
         return <HRDashboard initialTab="interviews" onNavigate={handleNavigate} />;
       case 'hr-analytics':
+        if (!isHR) return <AccessDenied role={role} onNavigate={handleNavigate} />;
         return <HRDashboard initialTab="analytics" onNavigate={handleNavigate} />;
       case 'hr-profile':
+        if (!isHR) return <AccessDenied role={role} onNavigate={handleNavigate} />;
         return <HRDashboard initialTab="profile" onNavigate={handleNavigate} />;
+
       case 'landing':
         return <LandingPage onNavigate={handleNavigate} />;
       case 'auth-login':
+      case 'admin-login':
+      case 'admin':
         return <UnifiedAuth initialMode="login" onNavigate={handleNavigate} />;
       case 'auth-signup':
         return <UnifiedAuth initialMode="signup" onNavigate={handleNavigate} />;
@@ -137,15 +212,15 @@ export function AppContent() {
         if (!isAuthenticated) return <LandingPage onNavigate={handleNavigate} />;
         
         // Enforce role dashboards on fallback
-        if (user?.campus?.role === 'TUTOR') return <TutorDashboard initialTab="overview" onNavigate={handleNavigate} />;
-        if (user?.campus?.role === 'SUPER_ADMIN') return <RegistrarDashboard />;
-        if (user?.campus?.role === 'COLLEGE_ADMIN') return <CollegeAdminDashboard />;
-        if (user?.campus?.role === 'HR') return <HRDashboard />;
+        if (role === 'TUTOR') return <TutorDashboard initialTab="overview" onNavigate={handleNavigate} />;
+        if (role === 'SUPER_ADMIN') return <RegistrarDashboard initialTab="overview" onNavigate={handleNavigate} />;
+        if (role === 'COLLEGE_ADMIN') return <CollegeAdminDashboard />;
+        if (role === 'HR') return <HRDashboard initialTab="overview" onNavigate={handleNavigate} />;
         return <Dashboard onNavigate={handleNavigate} onSelectSessionReport={setSelectedReportSession} />;
     }
   };
 
-  const isAuthRoute = currentPage === 'landing' || currentPage.startsWith('auth-');
+  const isAuthRoute = currentPage === 'landing' || currentPage.startsWith('auth-') || currentPage === 'admin-login' || currentPage === 'admin';
 
   return (
     <div className="min-h-screen flex flex-col text-slate-900 dark:text-slate-100">

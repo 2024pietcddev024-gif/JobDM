@@ -75,8 +75,8 @@ async function setupDatabase() {
     await client.query("INSERT INTO student_enrollments (batch_id, student_user_id) VALUES ($1, $2)", [batches.B, users.studentB1]);
 
     // Add some activity for cross-college leakage check
-    await client.query("INSERT INTO interview_sessions (id, user_id, category, difficulty, overall_score) VALUES (gen_random_uuid(), $1, 'DSA', 'Medium', 90)", [users.studentA1]);
-    await client.query("INSERT INTO interview_sessions (id, user_id, category, difficulty, overall_score) VALUES (gen_random_uuid(), $1, 'Frontend', 'Hard', 80)", [users.studentB1]);
+    await client.query("INSERT INTO interview_sessions (id, user_id, category, difficulty, overall_score, status) VALUES (gen_random_uuid(), $1, 'DSA', 'Medium', 90, 'COMPLETED')", [users.studentA1]);
+    await client.query("INSERT INTO interview_sessions (id, user_id, category, difficulty, overall_score, status) VALUES (gen_random_uuid(), $1, 'Frontend', 'Hard', 80, 'COMPLETED')", [users.studentB1]);
 
     Object.keys(users).forEach(k => tokens[k] = getToken(users[k], `${k}@test.com`));
   } finally {

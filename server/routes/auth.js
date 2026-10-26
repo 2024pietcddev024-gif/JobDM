@@ -81,9 +81,33 @@ export const authenticateOptional = (req, res, next) => {
 };
 
 router.post('/register', async (req, res) => {
-  const { name, email, password, college_code } = req.body;
+  const { name, email, password, college_code, role } = req.body;
   if (!name || !email || !password) {
     return res.status(400).json({ error: 'Name, email, and password are required' });
+  }
+
+  const requestedRole = role ? String(role).trim().toLowerCase() : 'student';
+
+  // Never allow Super Admin or College Admin creation through public registration
+  if (requestedRole === 'super_admin' || requestedRole === 'superadmin' || requestedRole === 'admin' || requestedRole === 'college_admin') {
+    return res.status(403).json({ error: 'Unauthorized role: Administrative accounts cannot be created via public registration.' });
+  }
+
+  // Preserve institutional provisioning rules for Teacher and HR accounts
+  if (requestedRole === 'teacher' || requestedRole === 'tutor') {
+    return res.status(403).json({
+      error: 'Teacher accounts are provisioned by institutional invitation only. Please contact your college administrator to receive your credentials.'
+    });
+  }
+
+  if (requestedRole === 'hr') {
+    return res.status(403).json({
+      error: 'HR accounts are provisioned by platform authorization only. Please contact your organization administrator to receive your credentials.'
+    });
+  }
+
+  if (requestedRole !== 'student') {
+    return res.status(400).json({ error: 'Invalid registration role specified.' });
   }
 
   try {
@@ -134,17 +158,34 @@ router.post('/register', async (req, res) => {
     const user = result.rows[0];
 
     // If matched with an active college, automatically register user as STUDENT of that college
+    let campusInfo = null;
     if (matchedCollege) {
       await pool.query(
         "INSERT INTO campus_users (user_id, college_id, system_role, status) VALUES ($1, $2, 'STUDENT', 'ACTIVE') ON CONFLICT (user_id, college_id) DO NOTHING",
         [user.id, matchedCollege.id]
       );
+      const cuRes = await pool.query(
+        "SELECT id, system_role FROM campus_users WHERE user_id = $1 AND college_id = $2 AND status = 'ACTIVE' LIMIT 1",
+        [user.id, matchedCollege.id]
+      );
+      if (cuRes.rows.length > 0) {
+        campusInfo = {
+          campusUserId: cuRes.rows[0].id,
+          role: cuRes.rows[0].system_role,
+          collegeId: matchedCollege.id,
+          collegeName: matchedCollege.name
+        };
+      }
     }
 
     const token = generateToken(user, matchedCollege?.id || null);
+    const formattedUser = formatUser(user);
+    if (campusInfo) {
+      formattedUser.campus = campusInfo;
+    }
     
     res.status(201).json({ 
-      user: formatUser(user), 
+      user: formattedUser, 
       token,
       college: matchedCollege ? { id: matchedCollege.id, name: matchedCollege.name } : null
     });
@@ -160,17 +201,18 @@ router.post('/register', async (req, res) => {
 router.post('/login', async (req, res) => {
   let { email, password, college_code, panel } = req.body;
   if (!email || !password) {
-    return res.status(400).json({ error: 'Email/HR ID and password are required' });
+    return res.status(400).json({ error: 'Email and password are required' });
   }
 
   const normalizedPanel = panel ? panel.toLowerCase() : null;
 
-  if (normalizedPanel === 'hr' && !email.includes('@')) {
-    email = `${email}@hr.jobdm.com`.toLowerCase();
+  // Support HR ID formatted logins (e.g., HR-piet24cd-nuen0k) or direct emails
+  let cleanIdentifier = email.trim().toLowerCase();
+  if (!cleanIdentifier.includes('@')) {
+    cleanIdentifier = `${cleanIdentifier}@hr.jobdm.com`;
   }
 
   try {
-    const cleanIdentifier = email.trim().toLowerCase();
     // Resolve user by canonical email, college_email, or personal_email
     const result = await pool.query(`
       SELECT * FROM users 
@@ -193,8 +235,8 @@ router.post('/login', async (req, res) => {
 
     let activeCollegeId = null;
 
-    if (college_code) {
-      // Verify college exists
+    if (college_code && college_code.trim()) {
+      // If college code was provided, verify college exists and user is an active member
       const colRes = await pool.query('SELECT id, status FROM colleges WHERE LOWER(code) = LOWER($1)', [college_code.trim()]);
       if (colRes.rows.length === 0) return res.status(400).json({ error: 'Invalid College Code' });
       if (colRes.rows[0].status !== 'ACTIVE') {
@@ -218,30 +260,66 @@ router.post('/login', async (req, res) => {
       if ((normalizedPanel === 'tutor' || normalizedPanel === 'teacher') && roleRes.rows[0].system_role !== 'TUTOR') {
         return res.status(403).json({ error: 'Unauthorized: No Teacher access for this college' });
       }
-    } else if (normalizedPanel === 'hr') {
-      return res.status(400).json({ error: 'College / Company Code is required for HR login' });
-    } else if (normalizedPanel === 'tutor' || normalizedPanel === 'teacher') {
-      const tutorRoleRes = await pool.query(
-        "SELECT college_id FROM campus_users WHERE user_id = $1 AND system_role = 'TUTOR' AND status = 'ACTIVE' ORDER BY created_at DESC LIMIT 1",
-        [user.id]
-      );
-      if (tutorRoleRes.rows.length === 0) {
-        return res.status(403).json({ error: 'Access Denied: Your account does not have active Teacher privileges.' });
-      }
-      activeCollegeId = tutorRoleRes.rows[0].college_id;
     } else {
+      // Authoritative database-driven role and college resolution - role is never trusted from frontend
       const generalRoleRes = await pool.query(
-        "SELECT college_id FROM campus_users WHERE user_id = $1 AND status = 'ACTIVE' ORDER BY created_at DESC LIMIT 1",
+        `SELECT cu.id, cu.college_id, cu.system_role, cu.status, c.status as college_status 
+         FROM campus_users cu 
+         LEFT JOIN colleges c ON cu.college_id = c.id 
+         WHERE cu.user_id = $1 AND cu.status = 'ACTIVE' 
+         ORDER BY 
+           (CASE 
+             WHEN cu.system_role = 'SUPER_ADMIN' THEN 1 
+             WHEN cu.system_role = 'HR' THEN 2 
+             WHEN cu.system_role = 'TUTOR' THEN 3 
+             WHEN cu.system_role = 'COLLEGE_ADMIN' THEN 4 
+             ELSE 5 
+           END) ASC, 
+           cu.created_at DESC 
+         LIMIT 1`,
         [user.id]
       );
+
       if (generalRoleRes.rows.length > 0) {
-        activeCollegeId = generalRoleRes.rows[0].college_id;
+        const primaryCampus = generalRoleRes.rows[0];
+        if (primaryCampus.college_id && primaryCampus.college_status && primaryCampus.college_status !== 'ACTIVE') {
+          return res.status(403).json({ error: 'This College/Company account is currently inactive. Please contact your administrator.' });
+        }
+        activeCollegeId = primaryCampus.college_id || null;
       }
     }
 
     const token = generateToken(user, activeCollegeId);
+
+    // Fetch campus context for formatted user response
+    let campusContext = null;
+    const campusContextRes = await pool.query(
+      `SELECT cu.id as campus_user_id, cu.college_id, cu.system_role, c.name as college_name 
+       FROM campus_users cu 
+       LEFT JOIN colleges c ON cu.college_id = c.id 
+       WHERE cu.user_id = $1 AND cu.status = 'ACTIVE'
+       ${activeCollegeId ? 'AND cu.college_id = $2' : ''}
+       ORDER BY (CASE WHEN cu.system_role = 'SUPER_ADMIN' THEN 1 WHEN cu.system_role = 'HR' THEN 2 WHEN cu.system_role = 'TUTOR' THEN 3 WHEN cu.system_role = 'COLLEGE_ADMIN' THEN 4 ELSE 5 END) ASC, cu.created_at DESC
+       LIMIT 1`,
+      activeCollegeId ? [user.id, activeCollegeId] : [user.id]
+    );
+
+    if (campusContextRes.rows.length > 0) {
+      const row = campusContextRes.rows[0];
+      campusContext = {
+        campusUserId: row.campus_user_id,
+        role: row.system_role,
+        collegeId: row.college_id,
+        collegeName: row.college_name
+      };
+    }
+
+    const formattedUser = formatUser(user);
+    if (campusContext) {
+      formattedUser.campus = campusContext;
+    }
     
-    res.json({ user: formatUser(user), token });
+    res.json({ user: formattedUser, token });
   } catch (error) {
     console.error('[auth/login] error:', error);
     res.status(500).json({ error: error.message || 'Server error' });
@@ -257,9 +335,37 @@ router.get('/me', authenticateToken, async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
-    res.json({ user: formatUser(result.rows[0]) });
+
+    const user = result.rows[0];
+    const formattedUser = formatUser(user);
+
+    let campusQuery = `
+      SELECT cu.id as campus_user_id, cu.college_id, cu.system_role, c.name as college_name 
+      FROM campus_users cu 
+      LEFT JOIN colleges c ON cu.college_id = c.id 
+      WHERE cu.user_id = $1 AND cu.status = 'ACTIVE'
+    `;
+    const params = [user.id];
+    if (req.user.active_college_id) {
+      campusQuery += ' AND cu.college_id = $2';
+      params.push(req.user.active_college_id);
+    }
+    campusQuery += ' ORDER BY (CASE WHEN cu.system_role = \'SUPER_ADMIN\' THEN 1 WHEN cu.system_role = \'HR\' THEN 2 WHEN cu.system_role = \'TUTOR\' THEN 3 WHEN cu.system_role = \'COLLEGE_ADMIN\' THEN 4 ELSE 5 END) ASC, cu.created_at DESC LIMIT 1';
+
+    const campusRes = await pool.query(campusQuery, params);
+    if (campusRes.rows.length > 0) {
+      const row = campusRes.rows[0];
+      formattedUser.campus = {
+        campusUserId: row.campus_user_id,
+        role: row.system_role,
+        collegeId: row.college_id,
+        collegeName: row.college_name
+      };
+    }
+
+    res.json({ user: formattedUser });
   } catch (error) {
-    console.error(error);
+    console.error('[auth/me] error:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
