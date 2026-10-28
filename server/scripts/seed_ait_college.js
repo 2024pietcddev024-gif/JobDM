@@ -100,15 +100,18 @@ async function seed() {
     let userRes = await query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email]);
     let userId;
 
+    const altEmail = email.replace('@aitjaipur.edu', '@aijaipur.edu');
+
     if (userRes.rows.length > 0) {
       userId = userRes.rows[0].id;
       await query(
         `UPDATE users 
          SET full_name = $1, password_hash = $2, college_email = $3, college_email_verified = TRUE,
-             target_role = COALESCE($4, target_role), target_level = 'Intermediate',
+             personal_email = $4, personal_email_verified = TRUE,
+             target_role = COALESCE($5, target_role), target_level = 'Intermediate',
              must_change_password = FALSE, account_lifecycle_status = 'ACTIVE_STUDENT'
-         WHERE id = $5`,
-        [fullName, passwordHash, email, targetRole || 'Software Engineer', userId]
+         WHERE id = $6`,
+        [fullName, passwordHash, email, altEmail, targetRole || 'Software Engineer', userId]
       );
     } else {
       const newU = await query(
@@ -118,9 +121,9 @@ async function seed() {
            primary_contact_preference, account_lifecycle_status, target_role, target_level,
            streak_days, must_change_password
          ) VALUES (
-           $1, $2, $3, $1, TRUE, NOW(), $1, TRUE, 'COLLEGE', 'ACTIVE_STUDENT', $4, 'Intermediate', 3, FALSE
+           $1, $2, $3, $1, TRUE, NOW(), $4, TRUE, 'COLLEGE', 'ACTIVE_STUDENT', $5, 'Intermediate', 3, FALSE
          ) RETURNING id`,
-        [email, passwordHash, fullName, targetRole || 'Software Engineer']
+        [email, passwordHash, fullName, altEmail, targetRole || 'Software Engineer']
       );
       userId = newU.rows[0].id;
     }
