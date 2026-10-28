@@ -451,8 +451,14 @@ export default function StudentJobs({ onNavigate }) {
                       </h3>
                       {getStatusBadge(app.status)}
                     </div>
-                    <p className="text-xs text-slate-500 flex items-center gap-3">
-                      <span><Building2 className="w-3.5 h-3.5 inline mr-1 text-amber-600" />{app.college_name}</span>
+                    <p className="text-xs text-slate-500 flex flex-wrap items-center gap-3">
+                      <span className="font-semibold text-slate-800 dark:text-slate-200">
+                        <Building2 className="w-3.5 h-3.5 inline mr-1 text-amber-600" />
+                        {app.company_name || app.college_name}
+                      </span>
+                      {app.company_name && app.college_name && app.company_name !== app.college_name && (
+                        <span className="text-slate-400">via {app.college_name}</span>
+                      )}
                       <span><MapPin className="w-3.5 h-3.5 inline mr-1" />{app.job_location}</span>
                       <span><Calendar className="w-3.5 h-3.5 inline mr-1" />Applied on {new Date(app.created_at).toLocaleDateString()}</span>
                     </p>

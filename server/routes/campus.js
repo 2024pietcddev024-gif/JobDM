@@ -481,6 +481,9 @@ router.get('/applications/my', async (req, res) => {
     const result = await pool.query(`
       SELECT 
         ha.*,
+        COALESCE(cpc.company_name, hj.company_name, 'Partner Company') as company_name,
+        cpc.tier as company_tier,
+        cpc.industry as company_industry,
         hj.title as job_title,
         hj.description as job_description,
         hj.skills as job_skills,
@@ -498,6 +501,7 @@ router.get('/applications/my', async (req, res) => {
       FROM hr_applications ha
       JOIN hr_jobs hj ON ha.job_id = hj.id
       JOIN colleges c ON hj.college_id = c.id
+      LEFT JOIN college_partner_companies cpc ON hj.partner_company_id = cpc.id
       LEFT JOIN hr_interviews hi ON hi.application_id = ha.id
       WHERE ha.candidate_id = $1
       ORDER BY ha.created_at DESC
