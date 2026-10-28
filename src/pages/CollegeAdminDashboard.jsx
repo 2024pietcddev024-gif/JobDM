@@ -3,7 +3,8 @@ import {
   Building2, Users, Layers, ShieldCheck, CheckCircle2, 
   XCircle, Loader2, UserPlus, Trash2, GraduationCap,
   Activity, BrainCircuit, Code2, LineChart, PieChart, Star, Target, TrendingUp, Trophy, Zap, MessageSquare, Briefcase, Calendar, ChevronRight,
-  Upload, Download, FileSpreadsheet, Key, RefreshCw, FileText, CheckCircle, AlertTriangle, Search
+  Upload, Download, FileSpreadsheet, Key, RefreshCw, FileText, CheckCircle, AlertTriangle, Search,
+  Mail, Send, Copy
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -1153,7 +1154,29 @@ export default function CollegeAdminDashboard({ initialTab = 'overview', onNavig
                       <td className="p-4 text-center">{t.studentInterviews}</td>
                       <td className="p-4 text-center text-indigo-600 dark:text-indigo-400 font-medium">{t.averageStudentInterviewScore !== null ? `${Math.round(t.averageStudentInterviewScore)}%` : 'N/A'}</td>
                       <td className="p-4 text-right">
-                        <button onClick={() => toggleTutorStatus(tutors.find(tx => tx.user_id === t.tutorId))} className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:text-white font-medium text-xs">Toggle Status</button>
+                        <div className="flex items-center justify-end gap-2">
+                          <button 
+                            onClick={() => {
+                              setResetTargetUser({
+                                user_id: t.tutorId,
+                                full_name: t.name,
+                                email: t.email,
+                                system_role: 'TUTOR'
+                              });
+                              setTempPasswordInput('');
+                              setResetResult(null);
+                              setShowResetModal(true);
+                            }} 
+                            title="Reset faculty password & email credentials"
+                            className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/20 flex items-center gap-1 transition-colors"
+                          >
+                            <Key className="w-3.5 h-3.5" />
+                            <span>Reset Pass</span>
+                          </button>
+                          <button onClick={() => toggleTutorStatus(tutors.find(tx => tx.user_id === t.tutorId))} className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:text-white font-medium text-xs px-2 py-1.5 rounded-lg hover:bg-white/5 transition-colors">
+                            Toggle Status
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -1195,9 +1218,28 @@ export default function CollegeAdminDashboard({ initialTab = 'overview', onNavig
                         <span className="px-2 py-1 bg-white dark:bg-white/5 rounded-md text-xs font-semibold">{studentDetail.academic.batch}</span>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <p className="text-sm text-slate-600 dark:text-slate-400">Last Activity</p>
-                      <p className="font-semibold">{studentDetail.activity.lastActivityAt ? new Date(studentDetail.activity.lastActivityAt).toLocaleString() : 'N/A'}</p>
+                    <div className="flex flex-col items-end gap-2.5">
+                      <button
+                        onClick={() => {
+                          setResetTargetUser({
+                            user_id: selectedStudentId,
+                            full_name: studentDetail.student.name,
+                            email: studentDetail.student.email,
+                            system_role: 'STUDENT'
+                          });
+                          setTempPasswordInput('');
+                          setResetResult(null);
+                          setShowResetModal(true);
+                        }}
+                        className="px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 flex items-center gap-1.5 transition-colors shadow-sm"
+                      >
+                        <Key className="w-3.5 h-3.5" />
+                        <span>Reset Password & Email</span>
+                      </button>
+                      <div className="text-right">
+                        <p className="text-xs text-slate-600 dark:text-slate-400">Last Activity</p>
+                        <p className="font-semibold text-xs">{studentDetail.activity.lastActivityAt ? new Date(studentDetail.activity.lastActivityAt).toLocaleString() : 'N/A'}</p>
+                      </div>
                     </div>
                   </div>
 
@@ -1253,7 +1295,7 @@ export default function CollegeAdminDashboard({ initialTab = 'overview', onNavig
                       <th className="p-4 font-semibold text-center">Avg Score</th>
                       <th className="p-4 font-semibold text-center">Coding Solved</th>
                       <th className="p-4 font-semibold text-center">Daily Task</th>
-                      <th className="p-4 font-semibold text-right">Profile</th>
+                      <th className="p-4 font-semibold text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
@@ -1273,9 +1315,33 @@ export default function CollegeAdminDashboard({ initialTab = 'overview', onNavig
                           {s.dailyTaskCompleted ? <span className="text-indigo-600 dark:text-indigo-400">Done</span> : <span className="text-slate-500">-</span>}
                         </td>
                         <td className="p-4 text-right">
-                          <button onClick={() => handleSelectStudentDetail(s.studentId)} className="p-2 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-500/20 rounded-lg transition-colors inline-flex">
-                            <ChevronRight className="w-4 h-4" />
-                          </button>
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              onClick={() => {
+                                setResetTargetUser({
+                                  user_id: s.studentId,
+                                  full_name: s.name,
+                                  email: s.email,
+                                  system_role: 'STUDENT'
+                                });
+                                setTempPasswordInput('');
+                                setResetResult(null);
+                                setShowResetModal(true);
+                              }}
+                              title="Reset student password and mail credentials"
+                              className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/20 flex items-center gap-1 transition-colors"
+                            >
+                              <Key className="w-3.5 h-3.5" />
+                              <span>Reset Pass</span>
+                            </button>
+                            <button 
+                              onClick={() => handleSelectStudentDetail(s.studentId)} 
+                              title="View full student profile & analytics"
+                              className="p-1.5 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-500/20 rounded-lg transition-colors inline-flex"
+                            >
+                              <ChevronRight className="w-4 h-4" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -1495,18 +1561,55 @@ export default function CollegeAdminDashboard({ initialTab = 'overview', onNavig
             </div>
 
             {resetResult ? (
-              <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-200 space-y-2 text-center">
+              <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-200 space-y-3 text-center">
                 <CheckCircle className="w-8 h-8 text-emerald-400 mx-auto" />
-                <p className="font-bold text-sm">Temporary Password Generated!</p>
-                <div className="p-2.5 rounded-lg bg-black/40 font-mono text-sm tracking-wider text-emerald-300 font-bold select-all">
+                <div>
+                  <p className="font-bold text-sm">Temporary Password Generated & Dispatched!</p>
+                  <p className="text-xs text-emerald-300/80 mt-0.5">Password has been updated in the database.</p>
+                </div>
+
+                <div className="p-2.5 rounded-lg bg-black/40 font-mono text-base tracking-wider text-emerald-300 font-bold select-all border border-emerald-500/20">
                   {resetResult.temporary_password}
                 </div>
-                <p className="text-[11px] text-emerald-300/80">
-                  Share this password with the user. They will be required to set their new personal password upon login.
-                </p>
+
+                {/* Email Dispatch Status */}
+                <div className="p-2.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs flex items-center justify-center gap-2">
+                  <Mail className="w-4 h-4 text-indigo-400 shrink-0" />
+                  <span className="text-left">Notification email dispatched to <strong className="text-white">{resetTargetUser.email}</strong></span>
+                </div>
+
+                <div className="flex gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const portal = window.location.origin;
+                      const text = `Hello ${resetTargetUser.full_name},\n\nYour JobDM credentials have been reset by your college administrator.\n\nLogin Email: ${resetTargetUser.email}\nTemporary Password: ${resetResult.temporary_password}\nPortal Link: ${portal}\n\nPlease sign in and set your personal password.`;
+                      navigator.clipboard.writeText(text);
+                      alert('Credentials copied to clipboard!');
+                    }}
+                    className="flex-1 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-colors"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>Copy Credentials</span>
+                  </button>
+
+                  {resetResult.mailto_link && (
+                    <a
+                      href={resetResult.mailto_link}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex-1 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-colors shadow-sm"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>Send in Mail App</span>
+                    </a>
+                  )}
+                </div>
+
                 <button
+                  type="button"
                   onClick={() => { setShowResetModal(false); setResetResult(null); }}
-                  className="mt-3 w-full py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs"
+                  className="mt-2 w-full py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition-colors"
                 >
                   Done
                 </button>
@@ -1524,8 +1627,15 @@ export default function CollegeAdminDashboard({ initialTab = 'overview', onNavig
                     placeholder={`e.g. ${college?.code || 'CAMPUS'}@2026 or leave blank to auto-generate`}
                     className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white outline-none focus:border-indigo-500 font-mono"
                   />
-                  <p className="text-[10px] text-slate-500 mt-1">
+                  <p className="text-[10px] text-slate-400 mt-1">
                     Leave blank to automatically generate a secure temporary password.
+                  </p>
+                </div>
+
+                <div className="p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs flex items-start gap-2">
+                  <Mail className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+                  <p className="text-[11px] leading-relaxed">
+                    An automated notification email with their new credentials and login instructions will be dispatched to <strong>{resetTargetUser.email}</strong> upon confirmation.
                   </p>
                 </div>
 

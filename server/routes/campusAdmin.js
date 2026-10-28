@@ -4,6 +4,7 @@ import db from '../db.js';
 import { authenticateToken } from './auth.js';
 import { loadCampusContext, requireCampusUser, requireCampusRole } from '../middleware/campusAuth.js';
 import { bulkProvisionUsers } from '../services/bulkProvisioningService.js';
+import { sendPasswordResetEmail } from '../services/emailService.js';
 
 const router = express.Router();
 const pool = { query: db.query };
@@ -552,24 +553,29 @@ router.get('/provisioned-directory', async (req, res) => {
   }
 });
 
-// 10. RESET USER'S PASSWORD TO NEW TEMPORARY PASSWORD (BY COLLEGE ADMIN)
+// 10. RESET USER'S PASSWORD TO NEW TEMPORARY PASSWORD (BY COLLEGE ADMIN) & DISPATCH EMAIL
 router.post('/users/:userId/reset-password', async (req, res) => {
   const collegeId = req.campusContext.college_id;
   const { userId } = req.params;
   const { temporary_password } = req.body;
 
   try {
-    // Verify user belongs to this college
-    const cuRes = await pool.query(
-      'SELECT id, system_role FROM campus_users WHERE user_id = $1 AND college_id = $2',
-      [userId, collegeId]
+    // Verify user belongs to this college and get their identity details
+    const userRes = await pool.query(
+      `SELECT u.id, u.email, u.full_name, cu.system_role, c.name as college_name, c.code as college_code
+       FROM users u
+       JOIN campus_users cu ON cu.user_id = u.id AND cu.college_id = $1
+       JOIN colleges c ON c.id = cu.college_id
+       WHERE u.id = $2`,
+      [collegeId, userId]
     );
-    if (cuRes.rows.length === 0) {
-      return res.status(404).json({ error: 'User does not belong to your college' });
+
+    if (userRes.rows.length === 0) {
+      return res.status(404).json({ error: 'User does not belong to your college or was not found' });
     }
 
-    const colRes = await pool.query('SELECT code FROM colleges WHERE id = $1', [collegeId]);
-    const collegeCode = colRes.rows[0]?.code || 'COLLEGE';
+    const targetUser = userRes.rows[0];
+    const collegeCode = targetUser.college_code || 'COLLEGE';
 
     const newTempPassword = temporary_password && temporary_password.trim() 
       ? temporary_password.trim() 
@@ -583,10 +589,30 @@ router.post('/users/:userId/reset-password', async (req, res) => {
       [newHash, userId]
     );
 
+    // Send automated email notification to student/faculty
+    const emailResult = await sendPasswordResetEmail({
+      toEmail: targetUser.email,
+      recipientName: targetUser.full_name || 'Student',
+      collegeName: targetUser.college_name || 'Your College',
+      temporaryPassword: newTempPassword,
+      role: targetUser.system_role
+    });
+
     res.json({
       success: true,
+      user: {
+        id: userId,
+        full_name: targetUser.full_name,
+        email: targetUser.email,
+        role: targetUser.system_role
+      },
       temporary_password: newTempPassword,
-      message: 'Password reset successfully. The user must set a new personal password on their next login.'
+      email_sent: emailResult.success,
+      email_method: emailResult.method,
+      mailto_link: emailResult.mailtoLink,
+      email_subject: emailResult.subject,
+      email_body: emailResult.textBody,
+      message: `Password reset successfully. Notification email dispatched to ${targetUser.email}.`
     });
   } catch (error) {
     console.error('[POST /users/:userId/reset-password] error:', error);
