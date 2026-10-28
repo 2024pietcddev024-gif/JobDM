@@ -20,11 +20,16 @@ const HOST = process.env.HOST || '0.0.0.0';
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
-    if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+    // In local development or testing, or when origin is missing (server-to-server / curl), allow all
+    if (!origin || process.env.NODE_ENV !== 'production') {
       return callback(null, true);
     }
-    return callback(new Error('Not allowed by CORS'));
+    // In production, validate against allowed domains and loopback origins
+    const allowed = ['http://localhost:5173', 'http://127.0.0.1:5173'];
+    if (allowed.includes(origin) || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+      return callback(null, true);
+    }
+    return callback(null, false);
   },
   credentials: true
 }));
