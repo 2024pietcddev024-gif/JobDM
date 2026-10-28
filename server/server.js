@@ -9,6 +9,11 @@ const __dirname = path.dirname(__filename);
 
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
+import { validateJwtSecret } from './config/jwt.js';
+
+// Enforce environment validation on application startup
+validateJwtSecret();
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -30,6 +35,7 @@ import campusAdminAnalyticsRoutes from './routes/campusAdminAnalytics.js';
 import campusTutorRoutes from './routes/campusTutor.js';
 import campusTutorAnalyticsRoutes from './routes/campusTutorAnalytics.js';
 import campusHRRoutes from './routes/campusHR.js';
+import privacyRoutes from './routes/privacy.js';
 
 app.use('/api/auth', authRoutes);
 app.use('/api/interviews', interviewRoutes);
@@ -42,6 +48,19 @@ app.use('/api/campus/tutor', campusTutorRoutes);
 app.use('/api/campus/tutor/analytics', campusTutorAnalyticsRoutes);
 app.use('/api/campus/hr', campusHRRoutes);
 app.use('/api/campus', campusRoutes);
+app.use('/api/privacy', privacyRoutes);
+
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', uptime: process.uptime(), timestamp: new Date() });
+});
+
+// Global JSON error handler to ensure clean JSON responses on unhandled errors (never HTML error pages)
+app.use((err, req, res, next) => {
+  console.error('[Unhandled Server Error]', err);
+  res.status(err.status || 500).json({
+    error: err.message || 'Internal server error'
+  });
+});
 
 if (process.env.NODE_ENV !== 'production') {
   app.listen(PORT, () => {

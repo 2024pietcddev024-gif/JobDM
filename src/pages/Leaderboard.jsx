@@ -14,7 +14,9 @@ export default function Leaderboard({ onNavigate }) {
 
   const [leaderboard, setLeaderboard] = useState([]);
   const [userRank, setUserRank] = useState(null);
-  const [scope, setScope] = useState('platform'); // 'platform' | 'college'
+  const [scope, setScope] = useState('college'); // default to strictly college scope
+  const [collegeName, setCollegeName] = useState(null);
+  const [canToggleScope, setCanToggleScope] = useState(false);
   const [criteriaText, setCriteriaText] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -31,6 +33,8 @@ export default function Leaderboard({ onNavigate }) {
         const data = await res.json();
         setLeaderboard(data.leaderboard || []);
         setUserRank(data.userRank || null);
+        setCollegeName(data.collegeName || user?.campus?.collegeName || null);
+        setCanToggleScope(Boolean(data.canToggleScope));
         setCriteriaText(data.criteria || '');
       } catch (err) {
         console.error('[Leaderboard] Fetch error:', err);
@@ -40,7 +44,7 @@ export default function Leaderboard({ onNavigate }) {
       }
     };
     fetchLeaderboard();
-  }, [scope]);
+  }, [scope, user]);
 
   const renderRankIcon = (rank) => {
     if (rank === 1) return <div className="w-8 h-8 rounded-full bg-yellow-500/20 text-yellow-500 flex items-center justify-center font-bold text-lg mx-auto">🥇</div>;
@@ -66,39 +70,48 @@ export default function Leaderboard({ onNavigate }) {
         </p>
       </div>
 
-      {/* Global Leaderboard */}
+      {/* Leaderboard Table Container */}
       <div className="rounded-3xl p-6 lg:p-8 border border-amber-200 dark:border-amber-800/40 bg-amber-50/70 dark:bg-amber-950/20 space-y-6 shadow-sm">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-          <h3 className="font-extrabold text-xl text-slate-900 dark:text-white font-['Outfit'] flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300">
-              <Trophy className="w-5 h-5" />
-            </div>
-            {scope === 'college' ? 'Authorized College Rankings' : 'Platform Candidate Rankings'}
-          </h3>
-
-          {/* Scope Toggle */}
-          <div className="flex items-center gap-2 bg-white/70 dark:bg-white/5 p-1 rounded-2xl border border-amber-200/70 dark:border-white/10">
-            <button
-              onClick={() => setScope('platform')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                scope === 'platform'
-                  ? 'bg-amber-600 text-white shadow-sm'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
-              }`}
-            >
-              Platform-Wide
-            </button>
-            <button
-              onClick={() => setScope('college')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                scope === 'college'
-                  ? 'bg-amber-600 text-white shadow-sm'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
-              }`}
-            >
-              My College Roster
-            </button>
+          <div>
+            <h3 className="font-extrabold text-xl text-slate-900 dark:text-white font-['Outfit'] flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300">
+                <Trophy className="w-5 h-5" />
+              </div>
+              {collegeName ? `${collegeName} Institutional Leaderboard` : 'Candidate Performance Rankings'}
+            </h3>
+            {collegeName && (
+              <p className="text-xs text-amber-800/80 dark:text-amber-300/80 mt-1 font-medium">
+                🔒 Filtered strictly to students enrolled at {collegeName}. Cross-college rankings are protected.
+              </p>
+            )}
           </div>
+
+          {/* Scope Toggle — Only visible if user has Super-Admin authorization */}
+          {canToggleScope && (
+            <div className="flex items-center gap-2 bg-white/70 dark:bg-white/5 p-1 rounded-2xl border border-amber-200/70 dark:border-white/10">
+              <button
+                onClick={() => setScope('platform')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                  scope === 'platform'
+                    ? 'bg-amber-600 text-white shadow-sm'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                }`}
+              >
+                Platform-Wide
+              </button>
+              <button
+                onClick={() => setScope('college')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                  scope === 'college'
+                    ? 'bg-amber-600 text-white shadow-sm'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                }`}
+              >
+                College Roster
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Scoring Methodology Banner */}

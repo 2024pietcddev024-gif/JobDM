@@ -6,13 +6,14 @@ const up = async () => {
     await client.query('BEGIN');
     console.log('[MIGRATION 005] Starting Smart Matching and Dual Identity migration...');
 
-    // 1. INTERVIEW_SESSIONS: Add status, completed_at, question count tracking
+    // 1. INTERVIEW_SESSIONS: Add status, completed_at, question count tracking and expand score column
     await client.query(`
       ALTER TABLE interview_sessions 
       ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'IN_PROGRESS',
       ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ,
       ADD COLUMN IF NOT EXISTS total_questions INT DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS answered_questions INT DEFAULT 0;
+      ADD COLUMN IF NOT EXISTS answered_questions INT DEFAULT 0,
+      ALTER COLUMN overall_score TYPE NUMERIC(5, 2);
     `);
 
     // Normalize and backfill existing sessions:

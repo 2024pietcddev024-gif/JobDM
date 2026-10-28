@@ -3,8 +3,11 @@ import db from '../db.js';
 import { authenticateToken } from './auth.js';
 import { generateQuestion, evaluateAnswer, evaluateCode, analyzeResume } from '../services/aiEngine.js';
 import { normalizeScore, getStudentInterviewMetrics, COMPLETED_STATUS_FILTER } from '../services/interviewMetrics.js';
+import { loadCampusContext, authorizeInterviewAccess, ROLES } from '../middleware/rbac.js';
 
 const router = express.Router();
+router.use(authenticateToken);
+router.use(loadCampusContext);
 
 function safeJson(val) {
   if (!val) return [];
@@ -41,10 +44,11 @@ router.post('/start', authenticateToken, async (req, res) => {
     let questionId = null;
 
     try {
+      const collegeId = req.campusContext?.collegeId || null;
       const sessionRes = await db.query(
-        `INSERT INTO interview_sessions (user_id, category, role, difficulty, mode, coding_language, status)
-         VALUES ($1, $2, $3, $4, $5, $6, 'IN_PROGRESS') RETURNING id`,
-        [req.user.id, category, role || null, difficulty, mode || 'voice', codingLanguage || null]
+        `INSERT INTO interview_sessions (user_id, college_id, category, role, difficulty, mode, coding_language, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'IN_PROGRESS') RETURNING id`,
+        [req.user.id, collegeId, category, role || null, difficulty, mode || 'voice', codingLanguage || null]
       );
       sessionId = sessionRes.rows[0].id;
 
@@ -447,14 +451,19 @@ router.get('/session/:sessionId/status', authenticateToken, async (req, res) => 
 
   try {
     const sessionRes = await db.query(
-      `SELECT id, status, tab_switch_count, clipboard_violation_count, termination_reason, terminated_at, overall_score
+      `SELECT id, user_id, college_id, status, tab_switch_count, clipboard_violation_count, termination_reason, terminated_at, overall_score
        FROM interview_sessions
-       WHERE id = $1 AND user_id = $2`,
-      [sessionId, req.user.id]
+       WHERE id = $1`,
+      [sessionId]
     );
 
     if (sessionRes.rows.length === 0) return res.status(404).json({ error: 'Session not found' });
     const s = sessionRes.rows[0];
+
+    const authCheck = await authorizeInterviewAccess(s, req.user);
+    if (!authCheck.authorized) {
+      return res.status(403).json({ error: 'Forbidden: Insufficient privileges to access this session status.' });
+    }
 
     const vRes = await db.query(
       `SELECT id, violation_type, violation_count, details, created_at 
@@ -500,20 +509,29 @@ router.get('/history', authenticateToken, async (req, res) => {
   }
 });
 
-// GET /api/interviews/leaderboard — Supports platform and college-scoped leaderboards with transparent criteria
-router.get('/leaderboard', authenticateToken, async (req, res) => {
+// GET /api/interviews/leaderboard — Strict college-scoped leaderboard; only Super-Admin can view platform-wide
+router.get('/leaderboard', async (req, res) => {
   try {
-    const { scope } = req.query; // 'college' or 'platform' (default)
+    const { scope } = req.query; // 'college' or 'platform'
 
     let collegeId = null;
-    if (scope === 'college') {
-      const cuRes = await db.query(
-        "SELECT college_id FROM campus_users WHERE user_id = $1 AND status = 'ACTIVE' LIMIT 1",
-        [req.user.id]
-      );
-      if (cuRes.rows.length > 0) {
-        collegeId = cuRes.rows[0].college_id;
-      }
+    let collegeName = null;
+    let systemRole = req.campusContext?.system_role || 'STUDENT';
+
+    const cuRes = await db.query(
+      "SELECT cu.college_id, c.name as college_name, cu.system_role FROM campus_users cu JOIN colleges c ON cu.college_id = c.id WHERE cu.user_id = $1 AND cu.status = 'ACTIVE' LIMIT 1",
+      [req.user.id]
+    );
+    if (cuRes.rows.length > 0) {
+      collegeId = cuRes.rows[0].college_id;
+      collegeName = cuRes.rows[0].college_name;
+      systemRole = cuRes.rows[0].system_role;
+    }
+
+    // Strict multi-tenant isolation: Only SUPER_ADMIN can request cross-college platform view
+    const isSuperAdmin = systemRole === 'SUPER_ADMIN' || req.user?.role === 'SUPER_ADMIN';
+    if (isSuperAdmin && scope === 'platform') {
+      collegeId = null; // Super Admin viewing platform
     }
 
     let filterClause = "i.status = 'COMPLETED' AND i.overall_score IS NOT NULL";
@@ -564,7 +582,11 @@ router.get('/leaderboard', authenticateToken, async (req, res) => {
     res.json({ 
       scope: collegeId ? 'college' : 'platform',
       collegeId: collegeId || null,
-      criteria: 'JobDM Leaderboard ranks verified users using their average score on completed mock interviews (normalized 0-100% scale), followed by completed sessions count and peak score. Incomplete and abandoned sessions are excluded.',
+      collegeName: collegeName || null,
+      canToggleScope: isSuperAdmin,
+      criteria: collegeId 
+        ? `${collegeName || 'College'} Institutional Leaderboard — ranks verified students within this institution based on average interview score, session volume, and peak scores.`
+        : 'JobDM Platform Leaderboard ranks verified users using their average score on completed mock interviews (normalized 0-100% scale), followed by completed sessions count and peak score.',
       totalParticipants: allRanks.length,
       leaderboard: top20,
       userRank: userRank || null
@@ -595,8 +617,14 @@ router.get('/stats', authenticateToken, async (req, res) => {
 router.get('/report/:id', authenticateToken, async (req, res) => {
   const sessionId = req.params.id;
   try {
-    const sessionRes = await db.query('SELECT * FROM interview_sessions WHERE id = $1 AND user_id = $2', [sessionId, req.user.id]);
+    const sessionRes = await db.query('SELECT * FROM interview_sessions WHERE id = $1', [sessionId]);
     if (sessionRes.rows.length === 0) return res.status(404).json({ error: 'Session not found' });
+    const session = sessionRes.rows[0];
+
+    const authCheck = await authorizeInterviewAccess(session, req.user);
+    if (!authCheck.authorized) {
+      return res.status(403).json({ error: 'Forbidden: You do not have permission to access this candidate interview report' });
+    }
 
     const qaRes = await db.query(
       `SELECT q.id, q.question_text, q.topics, q.expected_keywords, q.ideal_answer,
@@ -620,10 +648,167 @@ router.get('/report/:id', authenticateToken, async (req, res) => {
       [sessionId]
     );
 
-    res.json({ session: sessionRes.rows[0], qaPairs: qaRes.rows, violations: violationsRes.rows });
+    const appealsRes = await db.query(
+      `SELECT a.*, u.full_name as reviewer_name
+       FROM interview_appeals a
+       LEFT JOIN users u ON a.reviewer_id = u.id
+       WHERE a.session_id = $1
+       ORDER BY a.created_at DESC`,
+      [sessionId]
+    );
+
+    res.json({
+      session,
+      qaPairs: qaRes.rows,
+      violations: violationsRes.rows,
+      appeals: appealsRes.rows,
+      notice: 'Formative AI practice evaluation. Actual recruitment decisions are determined exclusively by human evaluators.'
+    });
   } catch (error) {
     console.error('[interviews/report] Error:', error.message);
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/interviews/session/:sessionId/appeal — Candidate submits appeal/correction request for human review
+router.post('/session/:sessionId/appeal', authenticateToken, async (req, res) => {
+  const { sessionId } = req.params;
+  const { questionId, category, reason } = req.body;
+
+  if (!reason || reason.trim().length < 10) {
+    return res.status(400).json({ error: 'A descriptive explanation (at least 10 characters) is required for evaluation appeal.' });
+  }
+
+  const validCategories = ['TECHNICAL_ACCURACY', 'AUDIO_TRANSCRIPTION', 'EVALUATION_DISCREPANCY', 'OTHER'];
+  const appealCategory = validCategories.includes(category) ? category : 'TECHNICAL_ACCURACY';
+
+  try {
+    const sessionRes = await db.query('SELECT id, user_id, college_id, status FROM interview_sessions WHERE id = $1', [sessionId]);
+    if (sessionRes.rows.length === 0) return res.status(404).json({ error: 'Session not found' });
+    if (sessionRes.rows[0].user_id !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden: You can only submit appeals for your own interview sessions.' });
+    }
+
+    const existingAppeal = await db.query(
+      `SELECT id FROM interview_appeals 
+       WHERE session_id = $1 AND user_id = $2 
+         AND status IN ('PENDING', 'UNDER_REVIEW') 
+         ${questionId ? 'AND question_id = $3' : ''}`,
+      questionId ? [sessionId, req.user.id, questionId] : [sessionId, req.user.id]
+    );
+
+    if (existingAppeal.rows.length > 0) {
+      return res.status(400).json({ error: 'An active appeal is already pending human review for this evaluation.' });
+    }
+
+    const newAppeal = await db.query(
+      `INSERT INTO interview_appeals (session_id, user_id, question_id, category, reason, status)
+       VALUES ($1, $2, $3, $4, $5, 'PENDING')
+       RETURNING *`,
+      [sessionId, req.user.id, questionId || null, appealCategory, reason.trim()]
+    );
+
+    res.status(201).json({
+      success: true,
+      appeal: newAppeal.rows[0],
+      message: 'Your appeal has been submitted for meaningful human review by an academic or recruitment evaluator.'
+    });
+  } catch (err) {
+    console.error('[interviews/appeal] error:', err);
+    res.status(500).json({ error: 'Server error while submitting appeal' });
+  }
+});
+
+// GET /api/interviews/session/:sessionId/appeals — Fetch appeals for an interview session
+router.get('/session/:sessionId/appeals', authenticateToken, async (req, res) => {
+  const { sessionId } = req.params;
+  try {
+    const sessionRes = await db.query('SELECT * FROM interview_sessions WHERE id = $1', [sessionId]);
+    if (sessionRes.rows.length === 0) return res.status(404).json({ error: 'Session not found' });
+
+    const authCheck = await authorizeInterviewAccess(sessionRes.rows[0], req.user);
+    if (!authCheck.authorized) {
+      return res.status(403).json({ error: 'Forbidden: Insufficient privileges to view appeals for this session.' });
+    }
+
+    const appealsRes = await db.query(
+      `SELECT a.*, u.full_name as reviewer_name
+       FROM interview_appeals a
+       LEFT JOIN users u ON a.reviewer_id = u.id
+       WHERE a.session_id = $1
+       ORDER BY a.created_at DESC`,
+      [sessionId]
+    );
+
+    res.json({ appeals: appealsRes.rows });
+  } catch (err) {
+    console.error('[interviews/get-appeals] error:', err);
+    res.status(500).json({ error: 'Server error while fetching appeals' });
+  }
+});
+
+// PATCH /api/interviews/appeals/:appealId — Human Reviewer resolves or updates an appeal
+router.patch('/appeals/:appealId', authenticateToken, async (req, res) => {
+  const { appealId } = req.params;
+  const { status, reviewer_notes, adjusted_score } = req.body;
+
+  const allowedRoles = [ROLES.TUTOR, ROLES.COLLEGE_ADMIN, ROLES.SUPER_ADMIN, ROLES.HR];
+  const userRole = req.campusContext?.systemRole || ROLES.STUDENT;
+  if (!allowedRoles.includes(userRole)) {
+    return res.status(403).json({ error: 'Forbidden: Only authorized human evaluators (Tutors, Admins, HR) can review appeals.' });
+  }
+
+  const validStatuses = ['PENDING', 'UNDER_REVIEW', 'RESOLVED', 'REJECTED'];
+  if (status && !validStatuses.includes(status)) {
+    return res.status(400).json({ error: `Invalid status. Must be one of: [${validStatuses.join(', ')}]` });
+  }
+
+  try {
+    const appealRes = await db.query(
+      `SELECT a.*, iss.college_id, iss.user_id as candidate_id
+       FROM interview_appeals a
+       JOIN interview_sessions iss ON a.session_id = iss.id
+       WHERE a.id = $1`,
+      [appealId]
+    );
+
+    if (appealRes.rows.length === 0) return res.status(404).json({ error: 'Appeal not found' });
+    const appeal = appealRes.rows[0];
+
+    // Enforce organizational boundaries for non-superadmins
+    if (userRole !== ROLES.SUPER_ADMIN) {
+      const targetCollegeId = appeal.college_id;
+      if (targetCollegeId && targetCollegeId !== req.campusContext?.collegeId) {
+        return res.status(403).json({ error: 'Forbidden: Appeal belongs to a candidate from another organization.' });
+      }
+    }
+
+    const updatedAppeal = await db.query(
+      `UPDATE interview_appeals
+       SET status = COALESCE($1, status),
+           reviewer_notes = COALESCE($2, reviewer_notes),
+           adjusted_score = COALESCE($3, adjusted_score),
+           reviewer_id = $4,
+           updated_at = NOW()
+       WHERE id = $5
+       RETURNING *`,
+      [
+        status || null,
+        reviewer_notes !== undefined ? reviewer_notes : null,
+        adjusted_score !== undefined && adjusted_score !== null ? parseFloat(adjusted_score) : null,
+        req.user.id,
+        appealId
+      ]
+    );
+
+    res.json({
+      success: true,
+      appeal: updatedAppeal.rows[0],
+      message: 'Human review appeal updated successfully.'
+    });
+  } catch (err) {
+    console.error('[interviews/patch-appeal] error:', err);
+    res.status(500).json({ error: 'Server error while updating appeal' });
   }
 });
 

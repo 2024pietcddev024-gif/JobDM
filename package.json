@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "concurrently -k \"vite\" \"node --watch server/server.js\"",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "migrate": "node server/migrate.js"
   },
   "dependencies": {
     "@codemirror/lang-cpp": "^6.0.3",

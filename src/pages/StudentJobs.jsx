@@ -381,9 +381,16 @@ export default function StudentJobs({ onNavigate }) {
                     {/* Header: Title + Match Badge */}
                     <div className="flex items-start justify-between gap-3 mb-2">
                       <div>
-                        <h3 className="text-lg font-bold text-slate-900 dark:text-white font-['Outfit']">
-                          {job.title}
-                        </h3>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="text-lg font-bold text-slate-900 dark:text-white font-['Outfit']">
+                            {job.title}
+                          </h3>
+                          {job.jobDomain && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-indigo-100 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                              {job.jobDomain.replace('_', ' ')}
+                            </span>
+                          )}
+                        </div>
                         <p className="text-xs font-semibold text-slate-500 flex items-center gap-1.5 mt-0.5">
                           <Building2 className="w-3.5 h-3.5 text-amber-600" /> {job.collegeName || 'Campus Placement'}
                         </p>

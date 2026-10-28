@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
+import { getJwtSecret } from '../config/jwt.js';
 
-const JWT_SECRET = 'f32c1e9b-cf67-4738-841e-b45e168c0e13';
+const JWT_SECRET = getJwtSecret();
 const token = jwt.sign({ id: 1, email: 'test@example.com' }, JWT_SECRET, { expiresIn: '1h' });
 
 const testCases = [

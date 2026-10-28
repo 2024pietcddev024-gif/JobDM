@@ -1,7 +1,10 @@
 import express from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import db from '../db.js';
+import { getJwtSecret } from '../config/jwt.js';
+import { getPermissionsForRole, loadCampusContext } from '../middleware/rbac.js';
 
 const pool = { query: db.query };
 
@@ -21,6 +24,8 @@ function formatUser(row) {
     primary_contact_preference: row.primary_contact_preference || 'PERSONAL',
     account_lifecycle_status: row.account_lifecycle_status || 'ACTIVE_STUDENT',
     graduation_year: row.graduation_year || null,
+    must_change_password: Boolean(row.must_change_password),
+    student_id_number: row.student_id_number || null,
     target_role: row.target_role,
     targetRole: row.target_role,   // camelCase alias
     targetLevel: row.target_level, // camelCase alias
@@ -42,7 +47,7 @@ const generateToken = (user, collegeId = null) => {
   
   return jwt.sign(
     payload,
-    process.env.JWT_SECRET || 'fallback_secret',
+    getJwtSecret(),
     { expiresIn: '7d' }
   );
 };
@@ -54,7 +59,7 @@ export const authenticateToken = (req, res, next) => {
   
   if (!token || token === 'null' || token === 'undefined') return res.sendStatus(401);
   
-  jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret', (err, user) => {
+  jwt.verify(token, getJwtSecret(), (err, user) => {
     if (err) return res.sendStatus(401);
     req.user = user;
     next();
@@ -71,7 +76,7 @@ export const authenticateOptional = (req, res, next) => {
     return next();
   }
   
-  jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret', (err, user) => {
+  jwt.verify(token, getJwtSecret(), (err, user) => {
     if (err) {
       return res.sendStatus(401);
     }
@@ -106,17 +111,35 @@ router.post('/register', async (req, res) => {
     });
   }
 
-  if (requestedRole !== 'student') {
-    return res.status(400).json({ error: 'Invalid registration role specified.' });
+  if (requestedRole && requestedRole !== 'student') {
+    return res.status(403).json({ error: 'Forbidden: Privileged roles cannot be self-assigned. Teacher and Administrator accounts must be provisioned by the institution.' });
   }
 
+  let client = null;
   try {
+    if (!db.pool) {
+      return res.status(503).json({
+        error: 'Database service is temporarily unavailable. Please verify DATABASE_URL configuration.'
+      });
+    }
+
+    try {
+      client = await db.pool.connect();
+    } catch (connErr) {
+      console.error('[auth/register] Database connection error:', connErr.message);
+      return res.status(503).json({
+        error: 'Database connection failed. Please check your network connection or try again shortly.'
+      });
+    }
+
+    await client.query('BEGIN');
     const cleanEmail = email.trim().toLowerCase();
-    const existing = await pool.query(
+    const existing = await client.query(
       'SELECT id FROM users WHERE LOWER(email) = $1 OR LOWER(college_email) = $1 OR LOWER(personal_email) = $1',
       [cleanEmail]
     );
     if (existing.rows.length > 0) {
+      await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Email already exists' });
     }
 
@@ -130,71 +153,305 @@ router.post('/register', async (req, res) => {
     
     let matchedCollege = null;
     if (college_code && college_code.trim()) {
-      const colRes = await pool.query('SELECT id, name, domain, status FROM colleges WHERE LOWER(code) = LOWER($1)', [college_code.trim()]);
-      if (colRes.rows.length > 0 && colRes.rows[0].status === 'ACTIVE') {
-        matchedCollege = colRes.rows[0];
+      const colRes = await client.query('SELECT id, name, code, domain, status FROM colleges WHERE LOWER(code) = LOWER($1)', [college_code.trim()]);
+      if (colRes.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: `Invalid College Code: No educational institution registered with code '${college_code.trim()}'.` });
       }
+      if (colRes.rows[0].status === 'PENDING') {
+        await client.query('ROLLBACK');
+        return res.status(403).json({ 
+          error: `Institution Access Restricted: '${colRes.rows[0].name}' is pending administrator verification. Students cannot register without platform authorization.` 
+        });
+      }
+      if (colRes.rows[0].status !== 'ACTIVE') {
+        await client.query('ROLLBACK');
+        return res.status(403).json({ 
+          error: `Institution Access Restricted: '${colRes.rows[0].name}' is currently inactive or suspended. Students cannot register without platform authorization.` 
+        });
+      }
+      matchedCollege = colRes.rows[0];
     } else if (emailDomain && !genericDomains.includes(emailDomain)) {
-      const colRes = await pool.query('SELECT id, name, domain, status FROM colleges WHERE LOWER(domain) = $1 AND status = $2 LIMIT 1', [emailDomain, 'ACTIVE']);
+      const colRes = await client.query('SELECT id, name, code, domain, status FROM colleges WHERE LOWER(domain) = $1 LIMIT 1', [emailDomain]);
       if (colRes.rows.length > 0) {
+        if (colRes.rows[0].status === 'PENDING') {
+          await client.query('ROLLBACK');
+          return res.status(403).json({ 
+            error: `Institutional Access Restricted: Your campus (${colRes.rows[0].name}) is pending administrator authorization.` 
+          });
+        }
+        if (colRes.rows[0].status !== 'ACTIVE') {
+          await client.query('ROLLBACK');
+          return res.status(403).json({ 
+            error: `Institutional Access Restricted: Your campus (${colRes.rows[0].name}) is currently inactive or suspended.` 
+          });
+        }
         matchedCollege = colRes.rows[0];
       }
     }
 
-    const result = await pool.query(
+    let instEmail = null;
+    let isRosterApproved = false;
+    let membershipStatus = 'ACTIVE';
+    let verificationMethod = 'MANUAL';
+    let verificationToken = null;
+
+    if (matchedCollege) {
+      instEmail = (req.body.institutional_email || cleanEmail).trim().toLowerCase();
+
+      // Enforce institutional domain check if college specifies an official domain
+      if (matchedCollege.domain && !instEmail.endsWith(`@${matchedCollege.domain.toLowerCase()}`) && !instEmail.endsWith(`.${matchedCollege.domain.toLowerCase()}`)) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: `Institutional email must belong to the institution domain (@${matchedCollege.domain})`
+        });
+      }
+
+      // Enforce unique institutional email: prevent claiming someone else's email at this college
+      const dupInstRes = await client.query(
+        "SELECT id FROM campus_users WHERE college_id = $1 AND LOWER(institutional_email) = $2 AND status != 'INACTIVE'",
+        [matchedCollege.id, instEmail]
+      );
+      if (dupInstRes.rows.length > 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: `The institutional email '${instEmail}' is already registered with an active account at ${matchedCollege.name}.`
+        });
+      }
+
+      // Check pre-approved roster
+      const rosterRes = await client.query(
+        "SELECT id, role, batch_id FROM college_approved_roster WHERE college_id = $1 AND LOWER(institutional_email) = $2 AND status IN ('PRE_APPROVED', 'PENDING')",
+        [matchedCollege.id, instEmail]
+      );
+
+      if (rosterRes.rows.length > 0) {
+        // Pre-approved by college roster
+        isRosterApproved = true;
+        membershipStatus = 'ACTIVE';
+        verificationMethod = 'ROSTER';
+
+        // Update roster entry
+        await client.query(
+          "UPDATE college_approved_roster SET status = 'ENROLLED', enrolled_at = NOW(), updated_at = NOW() WHERE id = $1",
+          [rosterRes.rows[0].id]
+        );
+      } else {
+        // Requires email verification token before granting active access
+        membershipStatus = 'PENDING_VERIFICATION';
+        verificationMethod = 'EMAIL_TOKEN';
+        isRosterApproved = false;
+      }
+    }
+
+    // Insert user into users table
+    const result = await client.query(
       `INSERT INTO users (full_name, email, personal_email, personal_email_verified, personal_email_verified_at, college_email, college_email_verified, college_email_verified_at, password_hash) 
        VALUES ($1, $2, $2, TRUE, NOW(), $3, $4, $5, $6) 
        RETURNING *`,
       [
         name, 
         cleanEmail, 
-        matchedCollege ? cleanEmail : null,
-        Boolean(matchedCollege),
-        matchedCollege ? new Date() : null,
+        matchedCollege ? instEmail : null,
+        isRosterApproved,
+        isRosterApproved ? new Date() : null,
         password_hash
       ]
     );
 
     const user = result.rows[0];
 
-    // If matched with an active college, automatically register user as STUDENT of that college
+    // If affiliated with a college, insert campus_users record
     let campusInfo = null;
     if (matchedCollege) {
-      await pool.query(
-        "INSERT INTO campus_users (user_id, college_id, system_role, status) VALUES ($1, $2, 'STUDENT', 'ACTIVE') ON CONFLICT (user_id, college_id) DO NOTHING",
-        [user.id, matchedCollege.id]
-      );
-      const cuRes = await pool.query(
-        "SELECT id, system_role FROM campus_users WHERE user_id = $1 AND college_id = $2 AND status = 'ACTIVE' LIMIT 1",
-        [user.id, matchedCollege.id]
-      );
-      if (cuRes.rows.length > 0) {
-        campusInfo = {
-          campusUserId: cuRes.rows[0].id,
-          role: cuRes.rows[0].system_role,
-          collegeId: matchedCollege.id,
-          collegeName: matchedCollege.name
-        };
+      await client.query(`
+        INSERT INTO campus_users (user_id, college_id, system_role, status, institutional_email, verified_at, verification_method)
+        VALUES ($1, $2, 'STUDENT', $3, $4, $5, $6)
+        ON CONFLICT (user_id, college_id) DO UPDATE SET
+          status = EXCLUDED.status,
+          institutional_email = EXCLUDED.institutional_email,
+          verified_at = EXCLUDED.verified_at,
+          verification_method = EXCLUDED.verification_method,
+          updated_at = NOW()
+      `, [
+        user.id, 
+        matchedCollege.id, 
+        membershipStatus, 
+        instEmail, 
+        isRosterApproved ? new Date() : null, 
+        verificationMethod
+      ]);
+
+      // If pre-approved roster specified a batch, enroll the student
+      if (isRosterApproved) {
+        const rosterBatchRes = await client.query(
+          "SELECT batch_id FROM college_approved_roster WHERE college_id = $1 AND LOWER(institutional_email) = $2 LIMIT 1",
+          [matchedCollege.id, instEmail]
+        );
+        if (rosterBatchRes.rows.length > 0 && rosterBatchRes.rows[0].batch_id) {
+          await client.query(
+            "INSERT INTO student_enrollments (student_user_id, batch_id, status) VALUES ($1, $2, 'ACTIVE') ON CONFLICT DO NOTHING",
+            [user.id, rosterBatchRes.rows[0].batch_id]
+          );
+        }
+      } else {
+        // Generate single-use verification token valid for 24 hours
+        verificationToken = crypto.randomBytes(24).toString('hex');
+        const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+        await client.query(`
+          INSERT INTO college_verification_tokens (user_id, college_id, institutional_email, token, expires_at)
+          VALUES ($1, $2, $3, $4, $5)
+        `, [user.id, matchedCollege.id, instEmail, verificationToken, expiresAt]);
       }
+
+      campusInfo = {
+        role: 'STUDENT',
+        collegeId: matchedCollege.id,
+        collegeName: matchedCollege.name,
+        collegeCode: matchedCollege.code,
+        membershipStatus,
+        verificationMethod,
+        institutionalEmail: instEmail,
+        permissions: getPermissionsForRole('STUDENT')
+      };
     }
+
+    await client.query('COMMIT');
 
     const token = generateToken(user, matchedCollege?.id || null);
     const formattedUser = formatUser(user);
     if (campusInfo) {
       formattedUser.campus = campusInfo;
+      formattedUser.role = campusInfo.role;
+      formattedUser.permissions = campusInfo.permissions;
+    } else {
+      formattedUser.role = 'STUDENT';
+      formattedUser.permissions = getPermissionsForRole('STUDENT');
     }
     
     res.status(201).json({ 
       user: formattedUser, 
       token,
-      college: matchedCollege ? { id: matchedCollege.id, name: matchedCollege.name } : null
+      college: matchedCollege ? { id: matchedCollege.id, name: matchedCollege.name, code: matchedCollege.code } : null,
+      verificationRequired: !isRosterApproved && Boolean(matchedCollege),
+      verificationToken: verificationToken || null,
+      message: isRosterApproved 
+        ? 'Registration successful! Institutional enrollment verified via approved campus roster.' 
+        : (matchedCollege ? 'Account created. Please verify your institutional email address to activate your campus access.' : 'Registration successful!')
     });
   } catch (error) {
+    if (client) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+    }
     console.error('[auth/register] error:', error);
     if (error.code === '23505') {
-      return res.status(400).json({ error: 'Email already exists' });
+      return res.status(400).json({ error: 'Email or institutional membership record already exists' });
     }
-    res.status(500).json({ error: error.message || 'Server error' });
+    if (
+      error.code === 'ENOTFOUND' ||
+      error.code === 'ETIMEDOUT' ||
+      error.code === 'ECONNREFUSED' ||
+      error.code === 'DB_NOT_CONFIGURED' ||
+      error.message?.includes('getaddrinfo') ||
+      error.message?.includes('timeout') ||
+      error.message?.includes('Connection terminated')
+    ) {
+      return res.status(503).json({
+        error: 'Database service is currently unreachable. Please check your network connection or try again in a few moments.'
+      });
+    }
+    res.status(500).json({ error: error.message || 'Registration failed due to a server error. Please try again.' });
+  } finally {
+    if (client) {
+      client.release();
+    }
+  }
+});
+
+// POST /api/auth/verify-institutional-email — Single-use token verification endpoint
+router.post('/verify-institutional-email', async (req, res) => {
+  const { token, email } = req.body;
+  if (!token || !token.trim()) {
+    return res.status(400).json({ error: 'Verification token is required' });
+  }
+
+  let client = null;
+  try {
+    if (!db.pool) {
+      return res.status(503).json({ error: 'Database service is temporarily unavailable.' });
+    }
+    try {
+      client = await db.pool.connect();
+    } catch (connErr) {
+      console.error('[verify-institutional-email] Connection error:', connErr.message);
+      return res.status(503).json({ error: 'Database connection failed. Please try again shortly.' });
+    }
+
+    await client.query('BEGIN');
+
+    let query = 'SELECT * FROM college_verification_tokens WHERE token = $1 AND used_at IS NULL';
+    let params = [token.trim()];
+    if (email && email.trim()) {
+      query += ' AND LOWER(institutional_email) = $2';
+      params.push(email.trim().toLowerCase());
+    }
+
+    const tokenRes = await client.query(query, params);
+    if (tokenRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Invalid or already used verification token' });
+    }
+
+    const tokenRow = tokenRes.rows[0];
+    if (new Date(tokenRow.expires_at) < new Date()) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Verification token has expired. Please contact administration for a new token.' });
+    }
+
+    // Mark token as used
+    await client.query('UPDATE college_verification_tokens SET used_at = NOW() WHERE id = $1', [tokenRow.id]);
+
+    // Activate campus_users membership
+    await client.query(`
+      UPDATE campus_users 
+      SET status = 'ACTIVE', 
+          verified_at = NOW(), 
+          verification_method = 'EMAIL_TOKEN',
+          updated_at = NOW()
+      WHERE user_id = $1 AND college_id = $2
+    `, [tokenRow.user_id, tokenRow.college_id]);
+
+    // Update users verification flags
+    await client.query(`
+      UPDATE users 
+      SET college_email_verified = TRUE, 
+          college_email_verified_at = NOW(),
+          account_lifecycle_status = 'ACTIVE_STUDENT'
+      WHERE id = $1
+    `, [tokenRow.user_id]);
+
+    await client.query('COMMIT');
+
+    res.json({
+      success: true,
+      message: 'Institutional email successfully verified. Your campus membership is now active.'
+    });
+  } catch (error) {
+    if (client) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+    }
+    console.error('[verify-institutional-email] error:', error);
+    if (
+      error.code === 'ENOTFOUND' ||
+      error.code === 'ETIMEDOUT' ||
+      error.code === 'ECONNREFUSED' ||
+      error.message?.includes('getaddrinfo')
+    ) {
+      return res.status(503).json({ error: 'Database service is currently unreachable. Please try again shortly.' });
+    }
+    res.status(500).json({ error: 'Failed to verify institutional email' });
+  } finally {
+    if (client) client.release();
   }
 });
 
@@ -237,10 +494,13 @@ router.post('/login', async (req, res) => {
 
     if (college_code && college_code.trim()) {
       // If college code was provided, verify college exists and user is an active member
-      const colRes = await pool.query('SELECT id, status FROM colleges WHERE LOWER(code) = LOWER($1)', [college_code.trim()]);
-      if (colRes.rows.length === 0) return res.status(400).json({ error: 'Invalid College Code' });
+      const colRes = await pool.query('SELECT id, name, status FROM colleges WHERE LOWER(code) = LOWER($1)', [college_code.trim()]);
+      if (colRes.rows.length === 0) return res.status(400).json({ error: 'Invalid College Code: No educational institution registered with this code.' });
+      if (colRes.rows[0].status === 'PENDING') {
+        return res.status(403).json({ error: `Institution Access Restricted: '${colRes.rows[0].name}' is pending administrator verification.` });
+      }
       if (colRes.rows[0].status !== 'ACTIVE') {
-        return res.status(403).json({ error: 'This College/Company account is currently inactive. Please contact your administrator.' });
+        return res.status(403).json({ error: `Institution Access Restricted: '${colRes.rows[0].name}' is currently inactive or suspended. Please contact your administrator.` });
       }
       activeCollegeId = colRes.rows[0].id;
 
@@ -250,8 +510,14 @@ router.post('/login', async (req, res) => {
         [user.id, activeCollegeId]
       );
 
-      if (roleRes.rows.length === 0 || roleRes.rows[0].status !== 'ACTIVE') {
-        return res.status(403).json({ error: 'Unauthorized: No active affiliation with this college' });
+      if (roleRes.rows.length === 0) {
+        return res.status(403).json({ error: 'Unauthorized: No active affiliation record found for this college' });
+      }
+      if (roleRes.rows[0].status === 'PENDING_VERIFICATION') {
+        return res.status(403).json({ error: 'Membership Restricted: Your institutional email verification is pending. Please verify your email with the verification token.' });
+      }
+      if (roleRes.rows[0].status !== 'ACTIVE') {
+        return res.status(403).json({ error: `Membership Restricted: Your campus membership is currently ${roleRes.rows[0].status.toLowerCase()}.` });
       }
 
       if (normalizedPanel === 'hr' && roleRes.rows[0].system_role !== 'HR') {
@@ -263,10 +529,10 @@ router.post('/login', async (req, res) => {
     } else {
       // Authoritative database-driven role and college resolution - role is never trusted from frontend
       const generalRoleRes = await pool.query(
-        `SELECT cu.id, cu.college_id, cu.system_role, cu.status, c.status as college_status 
+        `SELECT cu.id, cu.college_id, cu.system_role, cu.status as membership_status, c.status as college_status, c.name as college_name 
          FROM campus_users cu 
          LEFT JOIN colleges c ON cu.college_id = c.id 
-         WHERE cu.user_id = $1 AND cu.status = 'ACTIVE' 
+         WHERE cu.user_id = $1 
          ORDER BY 
            (CASE 
              WHEN cu.system_role = 'SUPER_ADMIN' THEN 1 
@@ -282,8 +548,17 @@ router.post('/login', async (req, res) => {
 
       if (generalRoleRes.rows.length > 0) {
         const primaryCampus = generalRoleRes.rows[0];
-        if (primaryCampus.college_id && primaryCampus.college_status && primaryCampus.college_status !== 'ACTIVE') {
-          return res.status(403).json({ error: 'This College/Company account is currently inactive. Please contact your administrator.' });
+        if (primaryCampus.college_id && primaryCampus.system_role !== 'SUPER_ADMIN') {
+          if (primaryCampus.college_status && primaryCampus.college_status !== 'ACTIVE') {
+            return res.status(403).json({ 
+              error: `Institution Access Restricted: Your educational institution (${primaryCampus.college_name || 'College'}) is currently ${primaryCampus.college_status.toLowerCase()}. Please contact your campus administrator.` 
+            });
+          }
+          if (primaryCampus.membership_status !== 'ACTIVE') {
+            return res.status(403).json({ 
+              error: `Membership Restricted: Your institutional access is currently ${primaryCampus.membership_status.toLowerCase()}. Institutional email verification or administrator approval is required.` 
+            });
+          }
         }
         activeCollegeId = primaryCampus.college_id || null;
       }
@@ -306,23 +581,46 @@ router.post('/login', async (req, res) => {
 
     if (campusContextRes.rows.length > 0) {
       const row = campusContextRes.rows[0];
+      const permissions = getPermissionsForRole(row.system_role);
       campusContext = {
         campusUserId: row.campus_user_id,
         role: row.system_role,
         collegeId: row.college_id,
-        collegeName: row.college_name
+        collegeName: row.college_name,
+        permissions
       };
     }
 
     const formattedUser = formatUser(user);
     if (campusContext) {
       formattedUser.campus = campusContext;
+      formattedUser.role = campusContext.role;
+      formattedUser.permissions = campusContext.permissions;
+    } else {
+      formattedUser.role = 'STUDENT';
+      formattedUser.permissions = getPermissionsForRole('STUDENT');
     }
     
-    res.json({ user: formattedUser, token });
+    res.json({ 
+      user: formattedUser, 
+      token,
+      must_change_password: Boolean(user.must_change_password)
+    });
   } catch (error) {
     console.error('[auth/login] error:', error);
-    res.status(500).json({ error: error.message || 'Server error' });
+    if (
+      error.code === 'ENOTFOUND' ||
+      error.code === 'ETIMEDOUT' ||
+      error.code === 'ECONNREFUSED' ||
+      error.code === 'DB_NOT_CONFIGURED' ||
+      error.message?.includes('getaddrinfo') ||
+      error.message?.includes('timeout')
+    ) {
+      return res.status(503).json({
+        error: 'Database service is currently unreachable. Please check your network connection or try again in a few moments.'
+      });
+    }
+    res.status(500).json({ error: error.message || 'Authentication failed due to a server error. Please try again.' });
   }
 });
 
@@ -355,18 +653,76 @@ router.get('/me', authenticateToken, async (req, res) => {
     const campusRes = await pool.query(campusQuery, params);
     if (campusRes.rows.length > 0) {
       const row = campusRes.rows[0];
+      const permissions = getPermissionsForRole(row.system_role);
       formattedUser.campus = {
         campusUserId: row.campus_user_id,
         role: row.system_role,
         collegeId: row.college_id,
-        collegeName: row.college_name
+        collegeName: row.college_name,
+        permissions
       };
+      formattedUser.role = row.system_role;
+      formattedUser.permissions = permissions;
+    } else {
+      formattedUser.role = 'STUDENT';
+      formattedUser.permissions = getPermissionsForRole('STUDENT');
     }
 
     res.json({ user: formattedUser });
   } catch (error) {
     console.error('[auth/me] error:', error);
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /api/auth/permissions — Authoritative server-side permissions and role definition
+router.get('/permissions', authenticateToken, loadCampusContext, async (req, res) => {
+  res.json({
+    userId: req.user.id,
+    role: req.campusContext.systemRole,
+    collegeId: req.campusContext.collegeId,
+    collegeName: req.campusContext.collegeName,
+    permissions: req.campusContext.permissions
+  });
+});
+
+// POST /api/auth/change-initial-password — First-time login password update for pre-provisioned accounts
+router.post('/change-initial-password', authenticateToken, async (req, res) => {
+  const { current_password, new_password } = req.body;
+  if (!current_password || !new_password) {
+    return res.status(400).json({ error: 'Current password and new password are required' });
+  }
+  if (new_password.length < 6) {
+    return res.status(400).json({ error: 'New password must be at least 6 characters long' });
+  }
+
+  try {
+    const userRes = await pool.query('SELECT id, password_hash FROM users WHERE id = $1', [req.user.id]);
+    if (userRes.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const user = userRes.rows[0];
+    const valid = await bcrypt.compare(current_password, user.password_hash);
+    if (!valid) {
+      return res.status(400).json({ error: 'Incorrect current password' });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const newHash = await bcrypt.hash(new_password, salt);
+
+    await pool.query(
+      'UPDATE users SET password_hash = $1, must_change_password = FALSE, updated_at = NOW() WHERE id = $2',
+      [newHash, req.user.id]
+    );
+
+    res.json({
+      success: true,
+      message: 'Your personal password has been set successfully. You can now access your campus portal.'
+    });
+  } catch (err) {
+    console.error('[change-initial-password] error:', err);
+    res.status(500).json({ error: 'Failed to update password' });
   }
 });
 

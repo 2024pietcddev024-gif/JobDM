@@ -28,7 +28,7 @@ export default function InterviewSession({ onNavigate }) {
   const [isMicOn, setIsMicOn] = useState(false);
   const [isTtsSpeaking, setIsTtsSpeaking] = useState(false);
   const [isTtsMuted, setIsTtsMuted] = useState(false);
-  const [isWebcamActive, setIsWebcamActive] = useState(true);
+  const [isWebcamActive, setIsWebcamActive] = useState(false);
   const [timerSeconds, setTimerSeconds] = useState(0);
   const [speechMetrics, setSpeechMetrics] = useState({ wordCount: 0, wpm: 0, fillerCount: 0 });
   const [submitSuccess, setSubmitSuccess] = useState(false);

@@ -310,6 +310,7 @@ export async function evaluateAnswer({ questionText, idealAnswer, expectedKeywor
     return {
       accuracy: 0, communication: 0, confidence: 0, depth: 0, examples: 0,
       overall: 0,
+      readinessLevel: 'NO_ANSWER',
       verdict: 'No Answer',
       strengths: [],
       improvements: [
@@ -318,7 +319,8 @@ export async function evaluateAnswer({ questionText, idealAnswer, expectedKeywor
         idealAnswer ? `Model answer: ${idealAnswer}` : 'Review the core concepts for this topic.'
       ],
       detailedFeedback: 'You did not submit an answer for this question. In a real interview, always attempt to answer — even a partial response shows thought process.',
-      idealAnswer: idealAnswer || null
+      idealAnswer: idealAnswer || null,
+      disclaimer: 'Formative AI practice feedback for candidate development. Not an automated hiring decision.'
     };
   }
 
@@ -329,7 +331,7 @@ export async function evaluateAnswer({ questionText, idealAnswer, expectedKeywor
   try {
     let modelName = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
     const model = genAI.getGenerativeModel({ model: modelName });
-    const prompt = `You are an expert AI Interview Evaluator for a student preparing for technical interviews.
+    const prompt = `You are an expert AI Interview Practice Coach providing constructive evaluation for a candidate practicing technical interviews.
 Question: "${questionText}"
 Ideal Answer Reference: "${idealAnswer || 'N/A'}"
 Expected Keywords: ${expectedKeywords ? (Array.isArray(expectedKeywords) ? expectedKeywords.join(', ') : expectedKeywords) : 'None'}
@@ -337,13 +339,18 @@ Candidate Answer: "${trimmedAnswer || 'No spoken answer provided'}"
 Candidate Code: "${trimmedCode || 'N/A'}"
 Speech Metrics: WPM: ${metrics.wpm || 'N/A'}, Filler Words: ${metrics.fillerCount || 0}.
 
-IMPORTANT SCORING RULES:
-- If the candidate provided code, evaluate its time/space complexity, correctness, and handling of edge cases.
-- If the answer is very short (under 10 words) or completely off-topic (and no valid code is provided), accuracy and depth MUST be below 3.
-- Do NOT give communication/confidence scores above 5 if the answer was empty or irrelevant.
-- Be honest and strict — this helps the student improve.
+IMPORTANT EVALUATION & ETHICAL PRINCIPLES:
+- This is formative PRACTICE feedback for candidate learning. It is NEVER an automated employment or hiring decision.
+- Base evaluation solely on demonstrable, job-related criteria: technical accuracy, problem decomposition, algorithmic correctness, system design tradeoffs, and technical clarity.
+- Speech rate or filler words are purely coaching tips for presentation fluency — DO NOT treat them as decisive criteria for technical competence.
+- Verdict labels reflect competency readiness, NOT employment decisions:
+  * 8.5 - 10.0: "Exemplary Mastery" (readinessLevel: "EXEMPLARY")
+  * 7.0 - 8.4: "Proficient" (readinessLevel: "PROFICIENT")
+  * 5.5 - 6.9: "Developing" (readinessLevel: "DEVELOPING")
+  * Under 5.5: "Needs Practice" (readinessLevel: "FOUNDATIONAL")
+- If the candidate provided code, evaluate its time/space complexity, correctness, and edge cases.
+- If the answer is under 10 words or off-topic (with no valid code), accuracy and depth MUST be below 3.
 
-Score each dimension 1.0-10.0 (be strict and honest):
 Return ONLY valid JSON (no backticks):
 {
   "accuracy": 7.5,
@@ -352,11 +359,13 @@ Return ONLY valid JSON (no backticks):
   "depth": 7.0,
   "examples": 6.0,
   "overall": 7.0,
-  "verdict": "Hire",
+  "readinessLevel": "PROFICIENT",
+  "verdict": "Proficient",
   "strengths": ["Mentioned REST vs GraphQL correctly"],
   "improvements": ["Should have discussed caching strategies"],
-  "detailedFeedback": "2-3 sentence honest analysis of what was good and what needs improvement.",
-  "idealAnswer": "The ideal answer is: [3-5 sentence model answer]"
+  "detailedFeedback": "2-3 sentence objective analysis of what was technically solid and what needs further study.",
+  "idealAnswer": "The ideal answer is: [3-5 sentence model answer]",
+  "disclaimer": "Formative AI practice feedback for candidate development. Not an automated hiring decision."
 }`;
 
     const result = await model.generateContent(prompt);
@@ -364,6 +373,7 @@ Return ONLY valid JSON (no backticks):
     text = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
     const parsed = JSON.parse(text);
     if (!parsed.idealAnswer) parsed.idealAnswer = idealAnswer || null;
+    if (!parsed.disclaimer) parsed.disclaimer = 'Formative AI practice feedback for candidate development. Not an automated hiring decision.';
     return parsed;
   } catch (err) {
     console.error('[AI Engine] Evaluation error:', err?.message || err);
@@ -381,6 +391,7 @@ function generateFallbackEvaluation({ questionText, idealAnswer, answer = '', co
     return {
       accuracy: 1.0, communication: 1.0, confidence: 1.5, depth: 1.0, examples: 1.0,
       overall: 1.1,
+      readinessLevel: 'FOUNDATIONAL',
       verdict: 'Needs Practice',
       strengths: [],
       improvements: [
@@ -389,7 +400,8 @@ function generateFallbackEvaluation({ questionText, idealAnswer, answer = '', co
         idealAnswer ? `Model answer: ${idealAnswer}` : 'Study the core concepts for this topic.'
       ],
       detailedFeedback: `Your answer was very short (${words} word${words !== 1 ? 's' : ''}). In a real interview, aim for 3-5 sentences that cover the key concepts, real-world examples, and tradeoffs.`,
-      idealAnswer: idealAnswer || null
+      idealAnswer: idealAnswer || null,
+      disclaimer: 'Formative AI practice feedback for candidate development. Not an automated hiring decision.'
     };
   }
 
@@ -409,10 +421,18 @@ function generateFallbackEvaluation({ questionText, idealAnswer, answer = '', co
   const examples = Math.min(9.0, Math.max(2.0, keywordHits > 1 ? 7.0 : 4.0));
   const overall = Number(((accuracy * 0.35) + (comm * 0.2) + (conf * 0.15) + (depth * 0.2) + (examples * 0.1)).toFixed(1));
 
-  let verdict = 'Hire';
-  if (overall >= 8.5) verdict = 'Strong Hire';
-  else if (overall < 7.0) verdict = 'Needs Practice';
-  else if (overall < 7.5) verdict = 'Weak Hire';
+  let readinessLevel = 'PROFICIENT';
+  let verdict = 'Proficient';
+  if (overall >= 8.5) {
+    readinessLevel = 'EXEMPLARY';
+    verdict = 'Exemplary Mastery';
+  } else if (overall < 5.5) {
+    readinessLevel = 'FOUNDATIONAL';
+    verdict = 'Needs Practice';
+  } else if (overall < 7.0) {
+    readinessLevel = 'DEVELOPING';
+    verdict = 'Developing';
+  }
 
   const strengths = [];
   if (keywordHits > 0) strengths.push(`Mentioned ${keywordHits} of ${keywords.length} core concept(s): ${keywords.slice(0, keywordHits).join(', ')}.`);
@@ -426,7 +446,7 @@ function generateFallbackEvaluation({ questionText, idealAnswer, answer = '', co
     if (missing.length) improvements.push(`Key concepts not mentioned: ${missing.join(', ')}. Study these specifically.`);
   }
   if (words < 30) improvements.push('Expand your answer with concrete examples and real-world context.');
-  if ((metrics.fillerCount || 0) > 3) improvements.push(`Reduce filler words (${metrics.fillerCount} detected) — practice speaking more deliberately.`);
+  if ((metrics.fillerCount || 0) > 3) improvements.push(`Speech Coaching: Reduce filler words (${metrics.fillerCount} detected) — speak deliberately.`);
   if (improvements.length === 0) improvements.push('Practice explaining edge cases and failure scenarios for a stronger answer.');
 
   const idealRef = idealAnswer ? `\n\nModel Answer: ${idealAnswer}` : '';
@@ -434,9 +454,14 @@ function generateFallbackEvaluation({ questionText, idealAnswer, answer = '', co
   return {
     accuracy: +accuracy.toFixed(1), communication: +comm.toFixed(1),
     confidence: +conf.toFixed(1), depth: +depth.toFixed(1), examples: +examples.toFixed(1),
-    overall, verdict, strengths, improvements,
-    detailedFeedback: `Your answer scored ${overall}/10 overall. ${strengths[0] || ''} ${improvements[0] || ''}${idealRef}`,
-    idealAnswer: idealAnswer || null
+    overall,
+    readinessLevel,
+    verdict,
+    strengths,
+    improvements,
+    detailedFeedback: `Your practice response scored ${overall}/10 overall on job-related criteria. ${strengths[0] || ''} ${improvements[0] || ''}${idealRef}`,
+    idealAnswer: idealAnswer || null,
+    disclaimer: 'Formative AI practice feedback for candidate development. Not an automated hiring decision.'
   };
 }
 

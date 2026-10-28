@@ -88,7 +88,10 @@ export default function HRDashboard({ initialTab = 'overview', onNavigate }) {
   // Modals
   const [isJobModalOpen, setIsJobModalOpen] = useState(false);
   const [editingJob, setEditingJob] = useState(null);
+  const [authorizedColleges, setAuthorizedColleges] = useState([]);
   const [jobForm, setJobForm] = useState({
+    college_id: '',
+    target_domain: 'fullstack',
     title: '',
     description: '',
     skills: '',
@@ -162,7 +165,17 @@ export default function HRDashboard({ initialTab = 'overview', onNavigate }) {
   };
 
   // Job CRUD Handlers
-  const handleOpenJobModal = (job = null) => {
+  const handleOpenJobModal = async (job = null) => {
+    try {
+      const colData = await fetchApi('/authorized-colleges');
+      setAuthorizedColleges(colData || []);
+      if (colData && colData.length > 0 && !job) {
+        setJobForm(prev => ({ ...prev, college_id: colData[0].id }));
+      }
+    } catch (e) {
+      console.warn('Could not load authorized colleges:', e);
+    }
+
     if (job) {
       setEditingJob(job);
       setJobForm({
@@ -1340,6 +1353,50 @@ export default function HRDashboard({ initialTab = 'overview', onNavigate }) {
             </div>
 
             <form onSubmit={handleSaveJob} className="space-y-4">
+              {/* Target Institution Selection (Super-Admin Verified Permissions) */}
+              {authorizedColleges.length > 0 && (
+                <div>
+                  <label className="block text-xs font-bold uppercase text-slate-600 dark:text-slate-400 mb-1">
+                    Target Institution (Authorized Colleges) *
+                  </label>
+                  <select
+                    value={jobForm.college_id}
+                    onChange={(e) => setJobForm({ ...jobForm, college_id: e.target.value })}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-900 dark:text-white outline-none focus:border-amber-500 font-semibold"
+                  >
+                    <option value="">Select Target College</option>
+                    {authorizedColleges.map(c => (
+                      <option key={c.id} value={c.id}>{c.name} ({c.code})</option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
+                    🔒 You can only post to institutions where Super Admin has granted you active authorization.
+                  </p>
+                </div>
+              )}
+
+              {/* Target Technical Domain Selection */}
+              <div>
+                <label className="block text-xs font-bold uppercase text-slate-600 dark:text-slate-400 mb-1">
+                  Technical Domain Specialization *
+                </label>
+                <select
+                  value={jobForm.target_domain}
+                  onChange={(e) => setJobForm({ ...jobForm, target_domain: e.target.value })}
+                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-900 dark:text-white outline-none focus:border-amber-500 font-semibold"
+                >
+                  <option value="frontend">Frontend Development (React, Vue, Web)</option>
+                  <option value="backend">Backend Development (Node, Java, Python, SQL)</option>
+                  <option value="fullstack">Full Stack Engineering</option>
+                  <option value="data_science">Data Science & AI/ML</option>
+                  <option value="devops">DevOps & Cloud Infrastructure (AWS, Docker)</option>
+                  <option value="mobile">Mobile App Development (Flutter, React Native)</option>
+                </select>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Used by the Smart Eligibility engine to match candidates based on resume skills and mock interview practice.
+                </p>
+              </div>
+
               <div>
                 <label className="block text-xs font-bold uppercase text-slate-600 dark:text-slate-400 mb-1">
                   Job Title *

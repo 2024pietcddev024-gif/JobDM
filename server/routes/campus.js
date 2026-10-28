@@ -165,15 +165,36 @@ async function getCandidateMatchingContext(candidateId, collegeId) {
   );
   const resumeSkills = resumeRes.rows[0]?.extracted_skills || [];
 
-  // Coding solved
+  // Coding solved & languages
   const codingRes = await pool.query(
     "SELECT COUNT(DISTINCT problem_id) as solved FROM coding_attempts WHERE user_id = $1 AND status = 'solved'",
     [candidateId]
   );
   const codingSolved = parseInt(codingRes.rows[0]?.solved || 0, 10);
 
-  // Authoritative interview metrics
+  const codingLangRes = await pool.query(
+    "SELECT DISTINCT language FROM coding_attempts WHERE user_id = $1 AND status = 'solved'",
+    [candidateId]
+  );
+  const codingLanguages = codingLangRes.rows.map(r => (r.language || '').toLowerCase()).filter(Boolean);
+
+  // Authoritative interview metrics and practiced domains
   const interviewMetrics = await getStudentInterviewMetrics(candidateId);
+
+  // Query interview categories/domains practiced by student
+  const domainRes = await pool.query(`
+    SELECT 
+      LOWER(COALESCE(category, role, 'general')) as domain,
+      COUNT(*)::int as count,
+      ROUND(AVG(overall_score)::numeric, 1) as avg_score
+    FROM interview_sessions
+    WHERE user_id = $1 AND (status = 'COMPLETED' OR overall_score IS NOT NULL)
+    GROUP BY LOWER(COALESCE(category, role, 'general'))
+    ORDER BY count DESC
+  `, [candidateId]);
+
+  const practicedDomains = domainRes.rows;
+  const topDomain = practicedDomains.length > 0 ? practicedDomains[0].domain : null;
 
   // Application IDs
   const appsRes = await pool.query(
@@ -192,6 +213,9 @@ async function getCandidateMatchingContext(candidateId, collegeId) {
     targetLevel: user.target_level,
     skills: resumeSkills,
     codingSolved,
+    codingLanguages,
+    practicedDomains,
+    topDomain,
     interviewScore: interviewMetrics.averageScore,
     completedInterviews: interviewMetrics.completedInterviews,
     appliedJobMap

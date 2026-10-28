@@ -3,6 +3,12 @@ const { Pool } = pkg;
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import dns from 'dns';
+
+// Force IPv4 lookup first in Node.js on Windows to prevent getaddrinfo ENOTFOUND on dual-stack hosts (Supabase pooler)
+if (typeof dns.setDefaultResultOrder === 'function') {
+  dns.setDefaultResultOrder('ipv4first');
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,7 +34,12 @@ let pool = null;
 if (isValidDbUrl) {
   pool = new Pool({
     connectionString: dbUrl,
-    ssl: { rejectUnauthorized: false } // Required for Supabase
+    ssl: { rejectUnauthorized: false }, // Required for Supabase
+    connectionTimeoutMillis: 10000,     // 10s timeout to connect (prevents indefinite hanging)
+    idleTimeoutMillis: 30000,           // Close idle clients after 30s
+    max: 20,                            // Support up to 20 concurrent connections
+    keepAlive: true,                    // Keep TCP connection alive
+    keepAliveInitialDelayMillis: 10000
   });
 
   pool.on('error', (err) => {
@@ -50,11 +61,34 @@ if (isValidDbUrl) {
 }
 
 export const query = async (text, params) => {
-  if (!pool) throw new Error('Database not configured. Set a valid DATABASE_URL in .env');
-  return pool.query(text, params);
+  if (!pool) {
+    const err = new Error('Database service is not configured. Please check DATABASE_URL in .env.');
+    err.code = 'DB_NOT_CONFIGURED';
+    throw err;
+  }
+  try {
+    return await pool.query(text, params);
+  } catch (err) {
+    // If connection was dropped, attempt one immediate retry
+    if (err.code === 'ECONNRESET' || err.code === '57P01' || err.message?.includes('Connection terminated')) {
+      console.warn('[DB] Connection dropped, retrying query once...');
+      return await pool.query(text, params);
+    }
+    throw err;
+  }
+};
+
+export const getClient = async () => {
+  if (!pool) {
+    const err = new Error('Database service is not configured. Please check DATABASE_URL in .env.');
+    err.code = 'DB_NOT_CONFIGURED';
+    throw err;
+  }
+  return pool.connect();
 };
 
 export default {
   query,
+  getClient,
   get pool() { return pool; }
 };

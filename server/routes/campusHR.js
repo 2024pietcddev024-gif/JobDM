@@ -11,6 +11,61 @@ router.use(authenticateToken);
 router.use(loadCampusContext);
 router.use(requireCampusRole('HR'));
 
+// Helper: Verify if HR user has verified Super Admin permission for a college
+async function isHrAuthorizedForCollege(hrUserId, targetCollegeId) {
+  if (!targetCollegeId) return { authorized: false, reason: 'Target institution is required' };
+
+  // 1. Verify college status is ACTIVE
+  const colRes = await pool.query('SELECT id, name, status FROM colleges WHERE id = $1', [targetCollegeId]);
+  if (colRes.rows.length === 0) {
+    return { authorized: false, reason: 'College not found in platform' };
+  }
+  if (colRes.rows[0].status !== 'ACTIVE') {
+    return { authorized: false, reason: `Target institution (${colRes.rows[0].name}) is currently inactive or pending administrator approval.` };
+  }
+
+  // 2. Check explicit hr_college_permissions granted by Super Admin
+  const permRes = await pool.query(
+    "SELECT id FROM hr_college_permissions WHERE hr_user_id = $1 AND college_id = $2 AND status = 'ACTIVE'",
+    [hrUserId, targetCollegeId]
+  );
+  if (permRes.rows.length > 0) return { authorized: true, college: colRes.rows[0] };
+
+  // 3. Check direct campus_users membership with HR role
+  const cuRes = await pool.query(
+    "SELECT id FROM campus_users WHERE user_id = $1 AND college_id = $2 AND system_role = 'HR' AND status = 'ACTIVE'",
+    [hrUserId, targetCollegeId]
+  );
+  if (cuRes.rows.length > 0) return { authorized: true, college: colRes.rows[0] };
+
+  return { 
+    authorized: false, 
+    reason: `Permission Denied: You do not have Super Admin permission to post jobs or access student talent for ${colRes.rows[0].name}.` 
+  };
+}
+
+// 0. GET /api/campus/hr/authorized-colleges - Colleges this HR has verified permission to target
+router.get('/authorized-colleges', async (req, res) => {
+  try {
+    const hrUserId = req.user.id;
+    const result = await pool.query(`
+      SELECT DISTINCT c.id, c.name, c.code, c.domain, c.status
+      FROM colleges c
+      WHERE c.status = 'ACTIVE' AND (
+        c.id IN (SELECT college_id FROM hr_college_permissions WHERE hr_user_id = $1 AND status = 'ACTIVE')
+        OR
+        c.id IN (SELECT college_id FROM campus_users WHERE user_id = $1 AND system_role = 'HR' AND status = 'ACTIVE')
+      )
+      ORDER BY c.name
+    `, [hrUserId]);
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error('[HR authorized-colleges] error:', err);
+    res.status(500).json({ error: 'Server error loading authorized colleges' });
+  }
+});
+
 // 1. GET /api/campus/hr/overview
 router.get('/overview', async (req, res) => {
   try {
@@ -207,10 +262,20 @@ router.get('/jobs', async (req, res) => {
   }
 });
 
-// 4. POST /api/campus/hr/jobs - Create Job Post
+// 4. POST /api/campus/hr/jobs - Create Job Post (Permission Guarded)
 router.post('/jobs', async (req, res) => {
   try {
-    const collegeId = req.campusContext.college_id;
+    const targetCollegeId = req.body.college_id || req.campusContext.college_id;
+    if (!targetCollegeId) {
+      return res.status(400).json({ error: 'Target college institution is required' });
+    }
+
+    // Strict Super-Admin permission check for target college
+    const authCheck = await isHrAuthorizedForCollege(req.user.id, targetCollegeId);
+    if (!authCheck.authorized) {
+      return res.status(403).json({ error: authCheck.reason });
+    }
+
     const { 
       title, 
       description, 
@@ -221,6 +286,7 @@ router.post('/jobs', async (req, res) => {
       min_interview_score,
       min_coding_solved,
       eligibility_criteria,
+      target_domain,
       experience_level, 
       location, 
       job_type, 
@@ -232,16 +298,35 @@ router.post('/jobs', async (req, res) => {
       return res.status(400).json({ error: 'Job title is required' });
     }
 
+    // Automatically resolve domain if not explicitly provided
+    let resolvedDomain = target_domain;
+    if (!resolvedDomain) {
+      const textToSearch = `${title} ${description || ''} ${skills || ''}`.toLowerCase();
+      if (textToSearch.includes('frontend') || textToSearch.includes('react') || textToSearch.includes('angular') || textToSearch.includes('vue') || textToSearch.includes('ui')) {
+        resolvedDomain = 'frontend';
+      } else if (textToSearch.includes('backend') || textToSearch.includes('node') || textToSearch.includes('django') || textToSearch.includes('spring') || textToSearch.includes('api')) {
+        resolvedDomain = 'backend';
+      } else if (textToSearch.includes('data') || textToSearch.includes('machine learning') || textToSearch.includes('ai') || textToSearch.includes('pandas')) {
+        resolvedDomain = 'data_science';
+      } else if (textToSearch.includes('devops') || textToSearch.includes('cloud') || textToSearch.includes('docker') || textToSearch.includes('kubernetes') || textToSearch.includes('aws')) {
+        resolvedDomain = 'devops';
+      } else if (textToSearch.includes('mobile') || textToSearch.includes('android') || textToSearch.includes('flutter') || textToSearch.includes('ios')) {
+        resolvedDomain = 'mobile';
+      } else {
+        resolvedDomain = 'fullstack';
+      }
+    }
+
     const newJob = await pool.query(`
       INSERT INTO hr_jobs (
         college_id, creator_id, title, description, skills, 
         preferred_skills, required_degree, min_cgpa, min_interview_score, min_coding_solved, eligibility_criteria,
-        experience_level, location, job_type, workplace_type, deadline, status
+        target_domain, experience_level, location, job_type, workplace_type, deadline, status
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'OPEN')
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'OPEN')
       RETURNING *
     `, [
-      collegeId, 
+      targetCollegeId, 
       req.user.id, 
       title.trim(), 
       description || '', 
@@ -252,6 +337,7 @@ router.post('/jobs', async (req, res) => {
       min_interview_score ? parseFloat(min_interview_score) : null,
       min_coding_solved ? parseInt(min_coding_solved, 10) : 0,
       eligibility_criteria ? JSON.stringify(eligibility_criteria) : null,
+      resolvedDomain,
       experience_level || 'Entry Level', 
       location || 'Remote',
       job_type || 'Full Time',

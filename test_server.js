@@ -1,5 +1,6 @@
 import app from './server/server.js';
 import jwt from 'jsonwebtoken';
+import { getJwtSecret } from './server/config/jwt.js';
 
 const testAuth = async () => {
   const PORT = 3005;
@@ -24,7 +25,7 @@ const testAuth = async () => {
       console.log('Guest Res Data:', guestData.status, guestData.passedCount);
 
       console.log('Testing logged in access...');
-      const validToken = jwt.sign({ id: 1, email: 'test@test.com' }, process.env.JWT_SECRET || 'fallback_secret');
+      const validToken = jwt.sign({ id: 1, email: 'test@test.com' }, getJwtSecret());
       const authRes = await fetch(`http://localhost:${PORT}/api/code/run`, {
         method: 'POST',
         headers: {

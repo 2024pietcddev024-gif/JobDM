@@ -11,20 +11,28 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 const fetchApi = async (path, method = 'GET', body = null) => {
   const token = localStorage.getItem('interviewiq_token');
   const headers = { 'Authorization': `Bearer ${token}` };
-  if (body) headers['Content-Type'] = 'application/json';
+  if (body !== null && body !== undefined) headers['Content-Type'] = 'application/json';
   
   const res = await fetch(`${API_URL}/campus/registrar${path}`, {
     method,
     headers,
-    body: body ? JSON.stringify(body) : undefined
+    body: (body !== null && body !== undefined) ? JSON.stringify(body) : undefined
   });
   
-  const data = await res.json().catch(() => null);
+  let data = null;
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    data = await res.json().catch(() => null);
+  } else {
+    const text = await res.text().catch(() => '');
+    if (text) data = { error: text };
+  }
+
   if (!res.ok) {
-    if (res.status === 401) throw new Error('Authentication required');
-    if (res.status === 403) throw new Error('Unauthorized Access');
-    if (res.status === 404) throw new Error('Resource not found');
-    if (res.status === 409) throw new Error(data?.error || 'Duplicate or conflicting data');
+    if (res.status === 401) throw new Error('Authentication required. Please sign in.');
+    if (res.status === 403) throw new Error(data?.error || 'Unauthorized Access.');
+    if (res.status === 404) throw new Error('Resource not found.');
+    if (res.status === 409) throw new Error(data?.error || 'Duplicate or conflicting data.');
     throw new Error(data?.error || `HTTP Error ${res.status}`);
   }
   return data;
@@ -47,6 +55,7 @@ export default function RegistrarDashboard({ initialTab = 'overview', onNavigate
   const [colleges, setColleges] = useState([]);
   const [hrs, setHrs] = useState([]);
   const [teachers, setTeachers] = useState([]);
+  const [pendingMembers, setPendingMembers] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [batches, setBatches] = useState([]);
 
@@ -82,14 +91,16 @@ export default function RegistrarDashboard({ initialTab = 'overview', onNavigate
   const loadData = async () => {
     try {
       setLoading(true); setError('');
-      const [colData, hrData, teacherData] = await Promise.all([
+      const [colData, hrData, teacherData, pendingData] = await Promise.all([
         fetchApi('/colleges-summary').catch(() => fetchApi('/colleges')),
         fetchApi('/hrs').catch(() => []),
-        fetchApi('/teachers').catch(() => [])
+        fetchApi('/teachers').catch(() => []),
+        fetchApi('/pending-memberships').catch(() => [])
       ]);
       setColleges(colData || []);
       setHrs(hrData || []);
       setTeachers(teacherData || []);
+      setPendingMembers(pendingData || []);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -170,17 +181,43 @@ export default function RegistrarDashboard({ initialTab = 'overview', onNavigate
   const toggleCollegeStatus = async (col) => {
     try {
       setError(''); setLoading(true);
-      const newStatus = col.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
-      await fetchApi(`/colleges/${col.id}/status`, 'PATCH', { status: newStatus });
+      if (col.status === 'PENDING') {
+        await fetchApi(`/colleges/${col.id}/verify`, 'POST', {});
+        setSuccessMsg(`College '${col.name}' verified and activated!`);
+      } else {
+        const newStatus = col.status === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE';
+        await fetchApi(`/colleges/${col.id}/status`, 'PATCH', { status: newStatus });
+        setSuccessMsg(`College status updated to ${newStatus}`);
+      }
       await loadData();
     } catch (err) { setError(err.message); } 
+    finally { setLoading(false); }
+  };
+
+  const approveMembership = async (campusUserId) => {
+    try {
+      setLoading(true); setError('');
+      await fetchApi(`/memberships/${campusUserId}/approve`, 'POST', {});
+      setSuccessMsg('Membership verified and activated successfully!');
+      await loadData();
+    } catch (err) { setError(err.message); }
+    finally { setLoading(false); }
+  };
+
+  const rejectMembership = async (campusUserId) => {
+    try {
+      setLoading(true); setError('');
+      await fetchApi(`/memberships/${campusUserId}/reject`, 'POST', {});
+      setSuccessMsg('Membership application rejected.');
+      await loadData();
+    } catch (err) { setError(err.message); }
     finally { setLoading(false); }
   };
 
   const toggleCampusUserStatus = async (campusUserId) => {
     try {
       setError(''); setLoading(true);
-      await fetchApi(`/campus-users/${campusUserId}/toggle-status`, 'PATCH');
+      await fetchApi(`/campus-users/${campusUserId}/toggle-status`, 'PATCH', {});
       await loadData();
       setSuccessMsg("User status updated successfully!");
       setTimeout(() => setSuccessMsg(''), 3000);
@@ -336,6 +373,7 @@ export default function RegistrarDashboard({ initialTab = 'overview', onNavigate
         {[
           { id: 'overview', label: 'Overview' },
           { id: 'colleges', label: `Colleges (${colleges.length})` },
+          { id: 'pending-memberships', label: `Pending Verifications (${pendingMembers.length})` },
           { id: 'hrs', label: `HR Accounts (${hrs.length})` },
           { id: 'teachers', label: `Faculty / Teachers (${teachers.length})` },
           { id: 'departments', label: 'Departments' },
@@ -511,9 +549,15 @@ export default function RegistrarDashboard({ initialTab = 'overview', onNavigate
                         </button>
                         <button 
                           onClick={() => toggleCollegeStatus(c)} 
-                          className="text-xs px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-white/5 hover:bg-slate-200 text-slate-700 dark:text-slate-300 font-medium"
+                          className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-colors ${
+                            c.status === 'PENDING'
+                              ? 'bg-amber-500 hover:bg-amber-600 text-white font-bold'
+                              : c.status === 'ACTIVE'
+                              ? 'bg-red-50 hover:bg-red-100 text-red-600 dark:bg-red-950/30 dark:text-red-400'
+                              : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400'
+                          }`}
                         >
-                          {c.status === 'ACTIVE' ? 'Suspend' : 'Activate'}
+                          {c.status === 'PENDING' ? 'Verify & Activate' : c.status === 'ACTIVE' ? 'Suspend' : 'Reactivate'}
                         </button>
                       </div>
                     </td>
@@ -526,6 +570,90 @@ export default function RegistrarDashboard({ initialTab = 'overview', onNavigate
             )}
             {loading && (
               <div className="p-8 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-indigo-500" /></div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* PENDING MEMBERSHIPS / VERIFICATIONS */}
+      {activeTab === 'pending-memberships' && (
+        <div className="space-y-4">
+          <div className="flex justify-between items-center">
+            <div>
+              <h2 className="text-lg font-bold">Pending Student & Faculty Verifications</h2>
+              <p className="text-xs text-slate-500">Review student and teacher campus membership requests requiring authorization.</p>
+            </div>
+            <button 
+              onClick={loadData}
+              className="bg-slate-100 dark:bg-white/5 hover:bg-slate-200 text-slate-700 dark:text-slate-300 px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5"
+            >
+              <RefreshCw className="w-3.5 h-3.5" /> Refresh
+            </button>
+          </div>
+
+          <div className="glass-card rounded-2xl overflow-hidden border border-slate-300 dark:border-white/10">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-50 dark:bg-white/5 border-b border-slate-300 dark:border-white/10 text-slate-600 dark:text-slate-400">
+                <tr>
+                  <th className="p-4 font-semibold">User Name</th>
+                  <th className="p-4 font-semibold">Account Email</th>
+                  <th className="p-4 font-semibold">Institutional Email</th>
+                  <th className="p-4 font-semibold">Target College</th>
+                  <th className="p-4 font-semibold">Requested Role</th>
+                  <th className="p-4 font-semibold">Status</th>
+                  <th className="p-4 font-semibold text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-white/5">
+                {pendingMembers.map(m => (
+                  <tr key={m.campus_user_id} className="hover:bg-slate-50 dark:hover:bg-white/[0.02]">
+                    <td className="p-4 font-bold text-slate-900 dark:text-white">
+                      {m.full_name}
+                    </td>
+                    <td className="p-4 text-xs font-mono text-slate-600 dark:text-slate-400">
+                      {m.account_email}
+                    </td>
+                    <td className="p-4 text-xs font-mono text-indigo-600 dark:text-indigo-400 font-semibold">
+                      {m.institutional_email || 'Not specified'}
+                    </td>
+                    <td className="p-4 text-xs font-medium text-slate-800 dark:text-slate-200">
+                      {m.college_name} <span className="text-[10px] text-slate-400">({m.college_code})</span>
+                    </td>
+                    <td className="p-4">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300">
+                        {m.system_role}
+                      </span>
+                    </td>
+                    <td className="p-4">
+                      <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-700 dark:text-amber-400">
+                        {m.membership_status}
+                      </span>
+                    </td>
+                    <td className="p-4 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => approveMembership(m.campus_user_id)}
+                          className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold transition-colors"
+                        >
+                          Approve
+                        </button>
+                        <button
+                          onClick={() => rejectMembership(m.campus_user_id)}
+                          className="text-xs px-3 py-1.5 rounded-lg bg-red-100 hover:bg-red-200 text-red-700 dark:bg-red-950/40 dark:text-red-400 font-medium transition-colors"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {pendingMembers.length === 0 && !loading && (
+              <div className="p-10 text-center text-slate-500">
+                <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-2 opacity-60" />
+                No pending membership verification requests at this time.
+              </div>
             )}
           </div>
         </div>

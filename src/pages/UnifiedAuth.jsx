@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { 
   Mail, Lock, User as UserIcon, ArrowRight, ArrowLeft, 
-  Eye, EyeOff, Briefcase, Users, CheckCircle, AlertCircle, Loader2 
+  Eye, EyeOff, Briefcase, Users, CheckCircle, AlertCircle, Loader2,
+  Building2, KeyRound, ShieldCheck
 } from 'lucide-react';
 
 export const getRoleDashboard = (role) => {
@@ -23,14 +24,22 @@ export const getRoleDashboard = (role) => {
 
 export default function UnifiedAuth({ initialMode = 'login', onNavigate }) {
   const { login, signup } = useAuth();
-  const [mode, setMode] = useState(initialMode === 'signup' ? 'signup' : 'login'); // 'login' | 'signup' | 'forgot'
+  const [mode, setMode] = useState(initialMode === 'signup' ? 'signup' : 'login'); // 'login' | 'signup' | 'forgot' | 'verify_token'
   const [selectedRole, setSelectedRole] = useState(null); // 'student' | 'teacher' | 'hr'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [name, setName] = useState('');
   const [collegeCode, setCollegeCode] = useState('');
+  const [institutionalEmail, setInstitutionalEmail] = useState('');
+  const [tokenInput, setTokenInput] = useState('');
+  const [pendingVerificationEmail, setPendingVerificationEmail] = useState('');
+  const [verificationSuccess, setVerificationSuccess] = useState('');
   const [resetSent, setResetSent] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [currentTempPassword, setCurrentTempPassword] = useState('');
+  const [postChangeRole, setPostChangeRole] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -109,17 +118,107 @@ export default function UnifiedAuth({ initialMode = 'login', onNavigate }) {
     if (mode === 'login') {
       result = await login(email.trim(), password);
     } else {
-      result = await signup(name.trim(), email.trim(), password, collegeCode.trim() || null, selectedRole || 'student');
+      result = await signup(
+        name.trim(), 
+        email.trim(), 
+        password, 
+        collegeCode.trim() || null, 
+        selectedRole || 'student',
+        institutionalEmail.trim() || null
+      );
     }
 
     if (result && !result.success) {
       setError(result.error || 'Authentication failed. Please check your credentials.');
       setIsLoading(false);
+    } else if (result?.verificationRequired) {
+      setIsLoading(false);
+      setPendingVerificationEmail(institutionalEmail.trim() || email.trim());
+      setTokenInput(result.verificationToken || '');
+      setMode('verify_token');
+    } else if (result?.must_change_password) {
+      setIsLoading(false);
+      setCurrentTempPassword(password);
+      setPostChangeRole(result?.user?.campus?.role);
+      setMode('change_initial_pwd');
     } else {
       // Automatically determine user's role and redirect to the appropriate dashboard
       const userRole = result?.user?.campus?.role;
       const targetDashboard = getRoleDashboard(userRole);
       onNavigate(targetDashboard);
+    }
+  };
+
+  const handleChangeInitialPassword = async (e) => {
+    e.preventDefault();
+    setError('');
+    if (!newPassword || newPassword.length < 6) {
+      setError('New password must be at least 6 characters long.');
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setError('Passwords do not match. Please re-enter your new password.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const token = localStorage.getItem('interviewiq_token');
+      const response = await fetch('/api/auth/change-initial-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          current_password: currentTempPassword,
+          new_password: newPassword
+        })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to update password');
+      }
+
+      const targetDashboard = getRoleDashboard(postChangeRole);
+      onNavigate(targetDashboard);
+    } catch (err) {
+      setError(err.message || 'Failed to set personal password');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleVerifyToken = async (e) => {
+    e.preventDefault();
+    if (!tokenInput.trim()) {
+      setError('Please enter the verification code.');
+      return;
+    }
+    setIsLoading(true);
+    setError('');
+    try {
+      const response = await fetch('/api/auth/verify-institutional-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: pendingVerificationEmail,
+          token: tokenInput.trim()
+        })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Verification failed');
+      }
+      setVerificationSuccess(data.message || 'Institutional email verified successfully! Please log in.');
+      setMode('login');
+      setEmail(pendingVerificationEmail);
+      setPassword('');
+      setError('');
+    } catch (err) {
+      setError(err.message || 'Failed to verify token');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -291,8 +390,70 @@ export default function UnifiedAuth({ initialMode = 'login', onNavigate }) {
           </div>
         )}
 
-        {/* Forgot Password Screen */}
-        {mode === 'forgot' ? (
+        {/* Verification Success Alert */}
+        {verificationSuccess && (
+          <div className="mb-5 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs font-medium flex items-center gap-2 animate-in fade-in">
+            <CheckCircle className="w-4 h-4 flex-shrink-0" />
+            <span>{verificationSuccess}</span>
+          </div>
+        )}
+
+        {/* Token Verification Screen */}
+        {mode === 'verify_token' ? (
+          <form onSubmit={handleVerifyToken} className="space-y-4">
+            <div className="p-4 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-center space-y-2">
+              <CheckCircle className="w-8 h-8 text-indigo-500 mx-auto" />
+              <h3 className="font-bold text-slate-900 dark:text-white text-sm">
+                Institutional Email Verification
+              </h3>
+              <p className="text-xs text-slate-600 dark:text-slate-300">
+                A verification code has been generated for{' '}
+                <span className="font-semibold text-indigo-600 dark:text-indigo-400">{pendingVerificationEmail}</span>.
+                Please enter the code to verify your college affiliation.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
+                Verification Code / Token
+              </label>
+              <input
+                type="text"
+                required
+                value={tokenInput}
+                onChange={(e) => setTokenInput(e.target.value)}
+                placeholder="Enter 6-digit or verification token"
+                className="w-full px-4 py-2.5 rounded-xl glass-input text-sm text-center font-mono tracking-widest uppercase"
+                autoFocus
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="w-full py-3 mt-2 rounded-xl glow-btn text-white font-bold text-sm transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 disabled:opacity-50"
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Verifying Code...</span>
+                </>
+              ) : (
+                <span>Verify & Activate Membership</span>
+              )}
+            </button>
+
+            <div className="text-center pt-2">
+              <button
+                type="button"
+                onClick={() => { setMode('login'); setError(''); }}
+                className="text-xs text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+              >
+                Already verified? <span className="text-indigo-600 dark:text-indigo-400 font-bold hover:underline">Sign In</span>
+              </button>
+            </div>
+          </form>
+        ) : mode === 'forgot' ? (
           resetSent ? (
             <div className="p-5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40 text-center space-y-3">
               <CheckCircle className="w-10 h-10 text-emerald-600 dark:text-emerald-400 mx-auto" />
@@ -354,9 +515,94 @@ export default function UnifiedAuth({ initialMode = 'login', onNavigate }) {
               </div>
             </form>
           )
+        ) : mode === 'change_initial_pwd' ? (
+          <form onSubmit={handleChangeInitialPassword} className="space-y-4">
+            <div className="p-4 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-center space-y-2">
+              <ShieldCheck className="w-8 h-8 text-indigo-500 mx-auto" />
+              <h3 className="font-bold text-slate-900 dark:text-white text-sm">
+                Welcome to your Campus Portal!
+              </h3>
+              <p className="text-xs text-slate-600 dark:text-slate-300">
+                Your account was pre-provisioned by your college. For your account security and exam privacy, please choose a new personal password.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
+                New Personal Password
+              </label>
+              <div className="relative">
+                <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                <input
+                  type={showPassword ? "text" : "password"}
+                  required
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="At least 6 characters"
+                  className="w-full pl-10 pr-10 py-2.5 rounded-xl glass-input text-sm"
+                  autoFocus
+                />
+                <button 
+                  type="button" 
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3.5 top-3 text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
+                Confirm New Password
+              </label>
+              <div className="relative">
+                <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                <input
+                  type={showPassword ? "text" : "password"}
+                  required
+                  value={confirmNewPassword}
+                  onChange={(e) => setConfirmNewPassword(e.target.value)}
+                  placeholder="Re-enter your new password"
+                  className="w-full pl-10 pr-10 py-2.5 rounded-xl glass-input text-sm"
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="w-full py-3 mt-2 rounded-xl glow-btn text-white font-bold text-sm transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 disabled:opacity-50"
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Setting New Password...</span>
+                </>
+              ) : (
+                <>
+                  <span>Save Password & Enter Dashboard</span>
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
+            </button>
+          </form>
         ) : (
           /* Login & Sign Up Forms */
           <form onSubmit={handleSubmit} className="space-y-4">
+            
+            {/* Campus Pre-Provisioning Institutional Banner on Login Screen */}
+            {mode === 'login' && (
+              <div className="p-3 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-800 dark:text-indigo-300 text-xs flex items-start gap-2.5 animate-in fade-in">
+                <Building2 className="w-4 h-4 flex-shrink-0 mt-0.5 text-indigo-600 dark:text-indigo-400" />
+                <div className="leading-relaxed">
+                  <span className="font-semibold block text-[11px] uppercase tracking-wider">Campus / Partner College Access</span>
+                  <span className="text-[11px] text-slate-600 dark:text-slate-300">
+                    Your account is already activated by your institution. Sign in directly with your college email and provided credentials.
+                  </span>
+                </div>
+              </div>
+            )}
             
             {/* Registration: Full Name */}
             {mode === 'signup' && (
@@ -419,6 +665,31 @@ export default function UnifiedAuth({ initialMode = 'login', onNavigate }) {
                 </div>
                 <p className="text-[10px] text-slate-500 mt-1">
                   If your college provided a code, enter it here. College domain emails link automatically.
+                </p>
+              </div>
+            )}
+
+            {/* Registration: Institutional Email (Optional / Required for college membership) */}
+            {mode === 'signup' && collegeCode.trim() && (
+              <div className="animate-in fade-in">
+                <div className="flex justify-between items-center mb-1.5">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                    Institutional Email
+                  </label>
+                  <span className="text-[10px] text-slate-500">Optional</span>
+                </div>
+                <div className="relative">
+                  <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                  <input
+                    type="email"
+                    value={institutionalEmail}
+                    onChange={(e) => setInstitutionalEmail(e.target.value)}
+                    placeholder="e.g. student@college.edu.in"
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl glass-input text-sm"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  If your college uses an official institutional domain, enter your campus email here.
                 </p>
               </div>
             )}

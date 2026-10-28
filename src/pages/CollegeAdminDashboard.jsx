@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Building2, Users, Layers, ShieldCheck, CheckCircle2, 
   XCircle, Loader2, UserPlus, Trash2, GraduationCap,
-  Activity, BrainCircuit, Code2, LineChart, PieChart, Star, Target, TrendingUp, Trophy, Zap, MessageSquare, Briefcase, Calendar, ChevronRight
+  Activity, BrainCircuit, Code2, LineChart, PieChart, Star, Target, TrendingUp, Trophy, Zap, MessageSquare, Briefcase, Calendar, ChevronRight,
+  Upload, Download, FileSpreadsheet, Key, RefreshCw, FileText, CheckCircle, AlertTriangle, Search
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -70,6 +71,21 @@ export default function CollegeAdminDashboard() {
   const [showManageBatchTutors, setShowManageBatchTutors] = useState(false);
   const [showManageBatchStudents, setShowManageBatchStudents] = useState(false);
 
+  // Bulk Provisioning State
+  const [provisionPastedText, setProvisionPastedText] = useState('');
+  const [provisionParsedUsers, setProvisionParsedUsers] = useState([]);
+  const [provisionForcePasswordChange, setProvisionForcePasswordChange] = useState(true);
+  const [provisionAutoCreate, setProvisionAutoCreate] = useState(true);
+  const [provisionLoading, setProvisionLoading] = useState(false);
+  const [provisionSuccessReport, setProvisionSuccessReport] = useState(null);
+  const [provisionedDirectory, setProvisionedDirectory] = useState([]);
+  const [directorySearch, setDirectorySearch] = useState('');
+  const [directoryRoleFilter, setDirectoryRoleFilter] = useState('ALL');
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetTargetUser, setResetTargetUser] = useState(null);
+  const [tempPasswordInput, setTempPasswordInput] = useState('');
+  const [resetResult, setResetResult] = useState(null);
+
   const loadInitialData = async () => {
     try {
       setLoading(true); setError('');
@@ -121,6 +137,9 @@ export default function CollegeAdminDashboard() {
         } else if (activeTab === 'students') {
           const sa = await fetchApi('/analytics/students').catch(() => []);
           setStudentsAnalytics(sa || []);
+        } else if (activeTab === 'bulk-provision') {
+          const dir = await fetchApi('/provisioned-directory').catch(() => []);
+          setProvisionedDirectory(dir || []);
         }
       } catch(e) {
         // Silently handle analytics failures to not break management
@@ -293,6 +312,154 @@ export default function CollegeAdminDashboard() {
     }
   };
 
+  // CSV & Bulk Provisioning Helper Functions
+  const parseCSVText = (text) => {
+    if (!text || !text.trim()) return [];
+    const lines = text.trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    if (lines.length <= 1) return [];
+
+    const firstLine = lines[0];
+    const delimiter = firstLine.includes('\t') ? '\t' : (firstLine.includes(';') ? ';' : ',');
+    const headers = firstLine.split(delimiter).map(h => h.trim().toLowerCase().replace(/^["']|["']$/g, ''));
+
+    const nameIdx = headers.findIndex(h => h.includes('name'));
+    const emailIdx = headers.findIndex(h => h.includes('email') || h.includes('mail'));
+    const pwdIdx = headers.findIndex(h => h.includes('pass') || h.includes('pwd'));
+    const roleIdx = headers.findIndex(h => h.includes('role') || h.includes('type'));
+    const deptIdx = headers.findIndex(h => h.includes('dept') || h.includes('branch'));
+    const batchIdx = headers.findIndex(h => h.includes('batch') || h.includes('class') || h.includes('section'));
+    const rollIdx = headers.findIndex(h => h.includes('roll') || h.includes('student_id') || h.includes('id_number'));
+
+    const parsed = [];
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(delimiter).map(c => c.trim().replace(/^["']|["']$/g, ''));
+      if (cols.length === 0 || cols.every(c => !c)) continue;
+
+      const row = {
+        name: nameIdx !== -1 ? cols[nameIdx] : cols[0] || '',
+        email: emailIdx !== -1 ? cols[emailIdx] : cols[1] || '',
+        password: pwdIdx !== -1 ? cols[pwdIdx] : (cols[2] || ''),
+        role: roleIdx !== -1 ? cols[roleIdx] : (cols[3] || 'STUDENT'),
+        department: deptIdx !== -1 ? cols[deptIdx] : (cols[4] || ''),
+        batch: batchIdx !== -1 ? cols[batchIdx] : (cols[5] || ''),
+        roll_number: rollIdx !== -1 ? cols[rollIdx] : (cols[6] || '')
+      };
+
+      if (row.name || row.email) {
+        parsed.push(row);
+      }
+    }
+    return parsed;
+  };
+
+  const downloadCSV = (filename, content) => {
+    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleDownloadSampleCSV = () => {
+    const colCode = college?.code || 'CAMPUS';
+    const sample = `Full Name,Email,Initial Password,Role,Department,Batch,Roll Number\n` +
+`Aarav Sharma,aarav.sharma@${college?.domain || 'college.edu.in'},${colCode}@2026,STUDENT,CSE,Batch 2027 CSE-A,2023-CS-001\n` +
+`Priya Verma,priya.verma@${college?.domain || 'college.edu.in'},${colCode}@2026,STUDENT,CSE,Batch 2027 CSE-A,2023-CS-002\n` +
+`Rohan Gupta,rohan.gupta@${college?.domain || 'college.edu.in'},${colCode}@2026,STUDENT,ECE,Batch 2027 ECE-B,2023-EC-045\n` +
+`Dr. Ramesh Kumar,ramesh.kumar@${college?.domain || 'college.edu.in'},Prof@${colCode}2026,TEACHER,CSE,Batch 2027 CSE-A,FAC-014\n` +
+`Dr. Sunita Rao,sunita.rao@${college?.domain || 'college.edu.in'},Prof@${colCode}2026,TEACHER,ECE,Batch 2027 ECE-B,FAC-021\n`;
+    downloadCSV(`InterviewIQ_${colCode}_Roster_Template.csv`, sample);
+  };
+
+  const handleFileUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result;
+      if (typeof text === 'string') {
+        setProvisionPastedText(text);
+        const parsed = parseCSVText(text);
+        setProvisionParsedUsers(parsed);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handlePastedTextChange = (text) => {
+    setProvisionPastedText(text);
+    const parsed = parseCSVText(text);
+    setProvisionParsedUsers(parsed);
+  };
+
+  const handleExecuteBulkProvision = async () => {
+    if (provisionParsedUsers.length === 0) {
+      setError('Please provide at least one valid user record to provision.');
+      return;
+    }
+    setProvisionLoading(true);
+    setError('');
+    setProvisionSuccessReport(null);
+
+    try {
+      const res = await fetchApi('/bulk-provision', 'POST', {
+        users: provisionParsedUsers,
+        forcePasswordChange: provisionForcePasswordChange,
+        autoCreateDepartmentsAndBatches: provisionAutoCreate
+      });
+
+      setProvisionSuccessReport(res);
+      const [dir, depts, bats, tuts, studs] = await Promise.all([
+        fetchApi('/provisioned-directory').catch(() => []),
+        fetchApi('/departments').catch(() => []),
+        fetchApi('/batches').catch(() => []),
+        fetchApi('/tutors').catch(() => []),
+        fetchApi('/students').catch(() => [])
+      ]);
+      setProvisionedDirectory(dir || []);
+      setDepartments(depts);
+      setBatches(bats);
+      setTutors(tuts);
+      setStudents(studs);
+      setProvisionPastedText('');
+      setProvisionParsedUsers([]);
+    } catch (err) {
+      setError(err.message || 'Bulk provisioning failed.');
+    } finally {
+      setProvisionLoading(false);
+    }
+  };
+
+  const handleDownloadCredentialsSheet = (usersList) => {
+    const colCode = college?.code || 'CAMPUS';
+    let csv = 'Full Name,Email,Role,Department,Batch,Roll Number,Initial Password,Status\n';
+    usersList.forEach(u => {
+      csv += `"${u.name}","${u.email}","${u.role}","${u.department || ''}","${u.batch || ''}","${u.roll_number || ''}","${u.initial_password}","ACTIVE"\n`;
+    });
+    downloadCSV(`InterviewIQ_${colCode}_Credentials_Distribution.csv`, csv);
+  };
+
+  const handleResetUserPassword = async () => {
+    if (!resetTargetUser) return;
+    try {
+      setError('');
+      setLoading(true);
+      const res = await fetchApi(`/users/${resetTargetUser.user_id}/reset-password`, 'POST', {
+        temporary_password: tempPasswordInput.trim() || undefined
+      });
+      setResetResult(res);
+      const dir = await fetchApi('/provisioned-directory').catch(() => []);
+      setProvisionedDirectory(dir || []);
+    } catch (err) {
+      setError(err.message || 'Failed to reset password');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -311,15 +478,16 @@ export default function CollegeAdminDashboard() {
 
       {/* TABS */}
       <div className="flex gap-2 border-b border-slate-300 dark:border-white/10 pb-2 overflow-x-auto">
-        {['overview', 'college', 'departments', 'batches', 'tutors', 'students'].map(t => (
+        {['overview', 'bulk-provision', 'college', 'departments', 'batches', 'tutors', 'students'].map(t => (
           <button 
             key={t}
             onClick={() => { setActiveTab(t); setError(''); setSelectedStudentId(null); }}
-            className={`px-4 py-2 text-sm font-semibold rounded-lg capitalize transition-colors whitespace-nowrap ${
-              activeTab === t ? 'bg-indigo-600 text-slate-900 dark:text-white' : 'text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:text-slate-200 hover:bg-white dark:bg-white/5'
+            className={`px-4 py-2 text-sm font-semibold rounded-lg capitalize transition-colors whitespace-nowrap flex items-center gap-1.5 ${
+              activeTab === t ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:text-slate-200 hover:bg-white dark:bg-white/5'
             }`}
           >
-            {t}
+            {t === 'bulk-provision' && <FileSpreadsheet className="w-4 h-4 text-emerald-400" />}
+            {t === 'bulk-provision' ? 'Bulk Onboarding' : t}
           </button>
         ))}
       </div>
@@ -439,6 +607,357 @@ export default function CollegeAdminDashboard() {
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {/* BULK ONBOARDING & ROSTER PROVISIONING */}
+      {activeTab === 'bulk-provision' && (
+        <div className="space-y-6">
+          {/* Header Card */}
+          <div className="glass-card p-6 rounded-2xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border border-indigo-500/20 bg-gradient-to-r from-indigo-500/5 via-purple-500/5 to-transparent">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  Zero-Friction Access
+                </span>
+                <span className="text-xs text-slate-500">Institution: {college?.name} ({college?.code})</span>
+              </div>
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                <FileSpreadsheet className="w-5 h-5 text-indigo-400" />
+                Institutional Student & Faculty Roster Provisioning
+              </h2>
+              <p className="text-xs text-slate-400 mt-1 max-w-2xl">
+                Upload your college roster to instantly create accounts for students and faculty. When they log in with their college credentials, the system automatically binds them to their designated department, batch, and curriculum.
+              </p>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <button
+                onClick={handleDownloadSampleCSV}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-white/5 hover:bg-white/10 border border-white/10 transition-colors flex items-center gap-2"
+                title="Download standard template to populate your college roster"
+              >
+                <Download className="w-4 h-4 text-indigo-400" />
+                Download Template (.csv)
+              </button>
+            </div>
+          </div>
+
+          {/* Provisioning Success Summary Report */}
+          {provisionSuccessReport && (
+            <div className="p-5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-200 space-y-3 animate-in fade-in">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <CheckCircle className="w-5 h-5 text-emerald-400" />
+                  <span className="font-bold text-sm">
+                    Roster Provisioning Successful! {provisionSuccessReport.provisionedCount} accounts activated.
+                  </span>
+                </div>
+                <button
+                  onClick={() => handleDownloadCredentialsSheet(provisionSuccessReport.users)}
+                  className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-md flex items-center gap-1.5 transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Download Credentials Sheet (.csv)
+                </button>
+              </div>
+              <p className="text-xs text-emerald-300/80">
+                All accounts have been linked to {college?.name}. Distribute the downloaded credentials sheet to your students and faculty so they can log in directly.
+              </p>
+              {provisionSuccessReport.errors?.length > 0 && (
+                <div className="mt-3 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-300 space-y-1">
+                  <span className="font-bold flex items-center gap-1">
+                    <AlertTriangle className="w-4 h-4 text-red-400" />
+                    {provisionSuccessReport.errors.length} Row(s) Skipped:
+                  </span>
+                  {provisionSuccessReport.errors.map((err, idx) => (
+                    <p key={idx}>• Row {err.row} ({err.email}): {err.error}</p>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Dual Upload / Paste Card */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* File Upload Zone */}
+            <div className="glass-card p-6 rounded-2xl space-y-4 flex flex-col justify-between">
+              <div>
+                <h3 className="text-sm font-bold flex items-center gap-2 mb-2">
+                  <Upload className="w-4 h-4 text-indigo-400" /> Upload Roster File (.CSV)
+                </h3>
+                <p className="text-xs text-slate-400 mb-4">
+                  Select a populated CSV roster file exported from your student management system or Excel.
+                </p>
+                <div className="border-2 border-dashed border-slate-300 dark:border-white/10 hover:border-indigo-500/50 rounded-2xl p-6 text-center transition-colors">
+                  <Upload className="w-8 h-8 text-slate-500 mx-auto mb-2" />
+                  <label className="cursor-pointer">
+                    <span className="text-xs font-bold text-indigo-400 hover:underline">Click to browse file</span>
+                    <input 
+                      type="file" 
+                      accept=".csv,text/csv,text/plain" 
+                      onChange={handleFileUpload} 
+                      className="hidden" 
+                    />
+                  </label>
+                  <p className="text-[11px] text-slate-500 mt-1">Supports standard CSV with UTF-8 encoding</p>
+                </div>
+              </div>
+
+              {/* Security & Provisioning Options */}
+              <div className="pt-4 border-t border-slate-300 dark:border-white/10 space-y-2.5">
+                <label className="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={provisionForcePasswordChange}
+                    onChange={(e) => setProvisionForcePasswordChange(e.target.checked)}
+                    className="rounded border-white/20 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <span>Require users to create personal password on first login (Recommended)</span>
+                </label>
+                <label className="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={provisionAutoCreate}
+                    onChange={(e) => setProvisionAutoCreate(e.target.checked)}
+                    className="rounded border-white/20 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <span>Auto-create missing departments & batches from roster</span>
+                </label>
+              </div>
+            </div>
+
+            {/* Quick Paste Zone */}
+            <div className="glass-card p-6 rounded-2xl space-y-3 flex flex-col">
+              <div className="flex justify-between items-center">
+                <h3 className="text-sm font-bold flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-purple-400" /> Or Quick Paste Tabular Data
+                </h3>
+                <button
+                  onClick={() => handlePastedTextChange('')}
+                  className="text-[11px] text-slate-500 hover:text-slate-300"
+                >
+                  Clear
+                </button>
+              </div>
+              <p className="text-xs text-slate-400">
+                Copy columns from Excel / Google Sheets and paste them directly:
+              </p>
+              <textarea
+                rows={6}
+                value={provisionPastedText}
+                onChange={(e) => handlePastedTextChange(e.target.value)}
+                placeholder="Full Name,Email,Initial Password,Role,Department,Batch,Roll Number&#10;Aarav Sharma,aarav@college.edu.in,Pass123,STUDENT,CSE,Batch 2027 CSE-A,2023-CS-001"
+                className="w-full flex-1 p-3 rounded-xl bg-slate-900/50 border border-slate-300 dark:border-white/10 text-xs font-mono text-slate-200 outline-none focus:border-indigo-500/50 resize-none"
+              />
+              <p className="text-[11px] text-slate-500">
+                Supported columns: Name, Email, Password (optional), Role (Student/Teacher), Department, Batch, Roll Number.
+              </p>
+            </div>
+          </div>
+
+          {/* Live Preview Table of Parsed Users */}
+          {provisionParsedUsers.length > 0 && (
+            <div className="glass-card p-6 rounded-2xl space-y-4 border border-indigo-500/30 animate-in fade-in">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <h3 className="text-base font-bold">Roster Preview</h3>
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-500/20 text-indigo-300">
+                    {provisionParsedUsers.length} Total Records
+                  </span>
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-500/20 text-blue-300">
+                    {provisionParsedUsers.filter(u => (u.role || '').toUpperCase() !== 'TEACHER' && (u.role || '').toUpperCase() !== 'TUTOR').length} Students
+                  </span>
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-300">
+                    {provisionParsedUsers.filter(u => (u.role || '').toUpperCase() === 'TEACHER' || (u.role || '').toUpperCase() === 'TUTOR').length} Faculty
+                  </span>
+                </div>
+                <button
+                  onClick={handleExecuteBulkProvision}
+                  disabled={provisionLoading}
+                  className="w-full sm:w-auto px-6 py-2.5 rounded-xl font-bold text-xs bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                >
+                  {provisionLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Provisioning Accounts...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck className="w-4 h-4" />
+                      <span>Execute Bulk Provisioning ({provisionParsedUsers.length})</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              <div className="overflow-x-auto rounded-xl border border-slate-300 dark:border-white/10">
+                <table className="w-full text-left text-xs whitespace-nowrap">
+                  <thead className="bg-white/5 border-b border-slate-300 dark:border-white/10 text-slate-400">
+                    <tr>
+                      <th className="p-3 font-semibold">#</th>
+                      <th className="p-3 font-semibold">Full Name</th>
+                      <th className="p-3 font-semibold">Institutional Email</th>
+                      <th className="p-3 font-semibold">Role</th>
+                      <th className="p-3 font-semibold">Department</th>
+                      <th className="p-3 font-semibold">Batch</th>
+                      <th className="p-3 font-semibold">Roll / ID</th>
+                      <th className="p-3 font-semibold">Initial Password</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {provisionParsedUsers.slice(0, 10).map((u, i) => (
+                      <tr key={i} className="hover:bg-white/[0.02]">
+                        <td className="p-3 text-slate-500">{i + 1}</td>
+                        <td className="p-3 font-medium text-white">{u.name}</td>
+                        <td className="p-3 text-indigo-400">{u.email}</td>
+                        <td className="p-3">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            (u.role || '').toUpperCase() === 'TEACHER' || (u.role || '').toUpperCase() === 'TUTOR'
+                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                              : 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20'
+                          }`}>
+                            {u.role || 'STUDENT'}
+                          </span>
+                        </td>
+                        <td className="p-3 text-slate-300">{u.department || '—'}</td>
+                        <td className="p-3 text-slate-300">{u.batch || '—'}</td>
+                        <td className="p-3 font-mono text-slate-400">{u.roll_number || '—'}</td>
+                        <td className="p-3 font-mono text-slate-400">
+                          {u.password ? u.password : `${college?.code || 'CAMPUS'}@2026 (Auto)`}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {provisionParsedUsers.length > 10 && (
+                  <div className="p-2.5 text-center text-xs text-slate-500 bg-white/[0.01] border-t border-white/5">
+                    Showing first 10 of {provisionParsedUsers.length} records. All will be provisioned.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Provisioned Campus Directory & Credentials Table */}
+          <div className="glass-card p-6 rounded-2xl space-y-4">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+              <div>
+                <h3 className="text-base font-bold flex items-center gap-2">
+                  <Users className="w-5 h-5 text-indigo-400" />
+                  Active Campus Directory & Credentials Management
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  View all provisioned students and faculty in your college with their live status and batch assignments.
+                </p>
+              </div>
+              <div className="flex items-center gap-3 w-full sm:w-auto">
+                {/* Search */}
+                <div className="relative flex-1 sm:w-64">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    type="text"
+                    value={directorySearch}
+                    onChange={(e) => setDirectorySearch(e.target.value)}
+                    placeholder="Search name, email, roll..."
+                    className="w-full pl-9 pr-3 py-1.5 rounded-xl bg-slate-900/50 border border-slate-300 dark:border-white/10 text-xs text-slate-200 outline-none focus:border-indigo-500"
+                  />
+                </div>
+                {/* Role Filter */}
+                <select
+                  value={directoryRoleFilter}
+                  onChange={(e) => setDirectoryRoleFilter(e.target.value)}
+                  className="px-3 py-1.5 rounded-xl bg-slate-900/50 border border-slate-300 dark:border-white/10 text-xs text-slate-200 outline-none"
+                >
+                  <option value="ALL">All Roles</option>
+                  <option value="STUDENT">Students Only</option>
+                  <option value="TUTOR">Faculty Only</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Table */}
+            <div className="overflow-x-auto rounded-xl border border-slate-300 dark:border-white/10">
+              <table className="w-full text-left text-xs whitespace-nowrap">
+                <thead className="bg-white/5 border-b border-slate-300 dark:border-white/10 text-slate-400">
+                  <tr>
+                    <th className="p-3 font-semibold">Member</th>
+                    <th className="p-3 font-semibold">Institutional Email</th>
+                    <th className="p-3 font-semibold">Role</th>
+                    <th className="p-3 font-semibold">Department</th>
+                    <th className="p-3 font-semibold">Batch</th>
+                    <th className="p-3 font-semibold">Security Status</th>
+                    <th className="p-3 font-semibold text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {provisionedDirectory
+                    .filter(m => {
+                      if (directoryRoleFilter !== 'ALL' && m.system_role !== directoryRoleFilter) return false;
+                      if (!directorySearch.trim()) return true;
+                      const q = directorySearch.toLowerCase();
+                      return (
+                        m.full_name?.toLowerCase().includes(q) ||
+                        m.email?.toLowerCase().includes(q) ||
+                        m.roll_number?.toLowerCase().includes(q)
+                      );
+                    })
+                    .map((m) => (
+                      <tr key={m.campus_user_id} className="hover:bg-white/[0.02]">
+                        <td className="p-3">
+                          <p className="font-semibold text-white">{m.full_name}</p>
+                          {m.roll_number && (
+                            <p className="text-[10px] text-slate-400 font-mono">Roll: {m.roll_number}</p>
+                          )}
+                        </td>
+                        <td className="p-3 text-indigo-400">{m.institutional_email || m.email}</td>
+                        <td className="p-3">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            m.system_role === 'TUTOR'
+                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                              : 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20'
+                          }`}>
+                            {m.system_role === 'TUTOR' ? 'FACULTY' : m.system_role}
+                          </span>
+                        </td>
+                        <td className="p-3 text-slate-300">{m.department_code || m.department_name || '—'}</td>
+                        <td className="p-3 text-slate-300">{m.batch_name || '—'}</td>
+                        <td className="p-3">
+                          {m.must_change_password ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                              <Key className="w-3 h-3" /> Initial Password
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                              <ShieldCheck className="w-3 h-3" /> Personal Password Set
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-3 text-right">
+                          <button
+                            onClick={() => {
+                              setResetTargetUser(m);
+                              setTempPasswordInput('');
+                              setResetResult(null);
+                              setShowResetModal(true);
+                            }}
+                            className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white transition-colors"
+                          >
+                            Reset Password
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  {provisionedDirectory.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="p-8 text-center text-slate-500">
+                        No members provisioned yet. Use the upload tool above to onboard your students and faculty.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
 
@@ -927,6 +1446,87 @@ export default function CollegeAdminDashboard() {
             <div className="mt-6 flex justify-end">
               <button onClick={() => setShowManageBatchStudents(false)} className="px-6 py-2 rounded-lg font-semibold bg-white dark:bg-white/5 hover:bg-slate-100 dark:bg-white/10 transition-colors">Close</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Password Reset Modal */}
+      {showResetModal && resetTargetUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 dark:bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-[#0f172a] border border-slate-300 dark:border-white/10 rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-4">
+            <div className="flex justify-between items-center">
+              <h3 className="text-lg font-bold flex items-center gap-2">
+                <Key className="w-5 h-5 text-indigo-400" /> Reset Temporary Password
+              </h3>
+              <button 
+                onClick={() => { setShowResetModal(false); setResetResult(null); }}
+                className="text-slate-400 hover:text-white text-sm"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-3 rounded-xl bg-white/5 border border-white/5 space-y-1">
+              <p className="text-xs text-slate-400">Target Member:</p>
+              <p className="font-semibold text-sm text-white">{resetTargetUser.full_name}</p>
+              <p className="text-xs text-indigo-400">{resetTargetUser.email}</p>
+            </div>
+
+            {resetResult ? (
+              <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-200 space-y-2 text-center">
+                <CheckCircle className="w-8 h-8 text-emerald-400 mx-auto" />
+                <p className="font-bold text-sm">Temporary Password Generated!</p>
+                <div className="p-2.5 rounded-lg bg-black/40 font-mono text-sm tracking-wider text-emerald-300 font-bold select-all">
+                  {resetResult.temporary_password}
+                </div>
+                <p className="text-[11px] text-emerald-300/80">
+                  Share this password with the user. They will be required to set their new personal password upon login.
+                </p>
+                <button
+                  onClick={() => { setShowResetModal(false); setResetResult(null); }}
+                  className="mt-3 w-full py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs"
+                >
+                  Done
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 uppercase mb-1.5">
+                    Custom Temporary Password (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={tempPasswordInput}
+                    onChange={(e) => setTempPasswordInput(e.target.value)}
+                    placeholder={`e.g. ${college?.code || 'CAMPUS'}@2026 or leave blank to auto-generate`}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white outline-none focus:border-indigo-500 font-mono"
+                  />
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Leave blank to automatically generate a secure temporary password.
+                  </p>
+                </div>
+
+                <div className="flex justify-end gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowResetModal(false)}
+                    className="px-4 py-2 rounded-xl text-xs font-semibold bg-white/5 hover:bg-white/10 text-slate-300"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleResetUserPassword}
+                    disabled={loading}
+                    className="px-5 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/30 flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                    <span>Confirm Reset</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

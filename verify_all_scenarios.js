@@ -4,13 +4,14 @@ import { fileURLToPath } from 'url';
 import jwt from 'jsonwebtoken';
 import db from './server/db.js';
 import app from './server/server.js';
+import { getJwtSecret } from './server/config/jwt.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.resolve(__dirname, '.env') });
 
 const pool = db.pool;
-const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret';
+const JWT_SECRET = getJwtSecret();
 const TEST_PORT = 3099;
 const BASE_URL = `http://localhost:${TEST_PORT}/api`;
 

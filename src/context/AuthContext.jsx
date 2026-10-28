@@ -22,6 +22,8 @@ export const AuthProvider = ({ children }) => {
       target_level: u.target_level || u.targetLevel || 'Intermediate',
       streakDays: u.streakDays || u.streak_days || 0,
       streak_days: u.streak_days || u.streakDays || 0,
+      must_change_password: Boolean(u.must_change_password),
+      student_id_number: u.student_id_number || null,
       campus: u.campus || null
     };
   };
@@ -75,9 +77,21 @@ export const AuthProvider = ({ children }) => {
         body: JSON.stringify(payload)
       });
       
-      const data = await res.json().catch(() => null);
+      let data = null;
+      try {
+        data = await res.json();
+      } catch (_) {
+        const text = await res.text().catch(() => '');
+        data = {
+          error: text && !text.includes('<!DOCTYPE') && !text.includes('<html')
+            ? text
+            : (res.status >= 500
+                ? 'Backend service is unreachable. Please make sure the backend server is running on port 3001.'
+                : `Authentication failed (${res.status}). Please check your credentials.`)
+        };
+      }
       if (!res.ok) {
-        throw new Error(data?.error || `HTTP Error ${res.status}`);
+        throw new Error(data?.error || `Authentication failed (${res.status}). Please check your credentials.`);
       }
       
       localStorage.setItem('interviewiq_token', data.token);
@@ -97,7 +111,11 @@ export const AuthProvider = ({ children }) => {
       setUser(normalizedUser);
       setIsAuthenticated(true);
       setIsAuthModalOpen(false);
-      return { success: true, user: normalizedUser };
+      return { 
+        success: true, 
+        user: normalizedUser, 
+        must_change_password: Boolean(data.must_change_password || normalizedUser.must_change_password) 
+      };
     } catch (err) {
       console.error(err);
       let errorMessage = err.message;
@@ -108,11 +126,12 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const signup = async (name, email, password, collegeCode = null, role = 'student') => {
+  const signup = async (name, email, password, collegeCode = null, role = 'student', institutionalEmail = null) => {
     try {
       const payload = { name, email, password };
       if (collegeCode) payload.college_code = collegeCode;
       if (role) payload.role = role;
+      if (institutionalEmail) payload.institutional_email = institutionalEmail;
 
       const res = await fetch(`${API_URL}/auth/register`, {
         method: 'POST',
@@ -120,20 +139,36 @@ export const AuthProvider = ({ children }) => {
         body: JSON.stringify(payload)
       });
       
-      const data = await res.json().catch(() => null);
+      let data = null;
+      try {
+        data = await res.json();
+      } catch (_) {
+        const text = await res.text().catch(() => '');
+        data = {
+          error: text && !text.includes('<!DOCTYPE') && !text.includes('<html')
+            ? text
+            : (res.status >= 500
+                ? 'Backend service is unreachable. Please make sure the backend server is running on port 3001.'
+                : `Authentication failed (${res.status}). Please check your credentials.`)
+        };
+      }
       if (!res.ok) {
-        throw new Error(data?.error || `HTTP Error ${res.status}`);
+        throw new Error(data?.error || `Registration failed (${res.status}). Please try again.`);
       }
 
-      localStorage.setItem('interviewiq_token', data.token);
+      if (data.token) {
+        localStorage.setItem('interviewiq_token', data.token);
+      }
 
       try {
-        const campRes = await fetch(`${API_URL}/campus/me`, {
-          headers: { Authorization: `Bearer ${data.token}` }
-        });
-        if (campRes.ok) {
-          const campData = await campRes.json();
-          data.user.campus = campData.campus;
+        if (data.token) {
+          const campRes = await fetch(`${API_URL}/campus/me`, {
+            headers: { Authorization: `Bearer ${data.token}` }
+          });
+          if (campRes.ok) {
+            const campData = await campRes.json();
+            data.user.campus = campData.campus;
+          }
         }
       } catch (e) {}
 
@@ -141,7 +176,14 @@ export const AuthProvider = ({ children }) => {
       setUser(normalizedUser);
       setIsAuthenticated(true);
       setIsAuthModalOpen(false);
-      return { success: true, user: normalizedUser };
+      return { 
+        success: true, 
+        user: normalizedUser, 
+        token: data.token,
+        verificationRequired: data.verificationRequired,
+        verificationToken: data.verificationToken,
+        message: data.message
+      };
     } catch (err) {
       console.error(err);
       let errorMessage = err.message;

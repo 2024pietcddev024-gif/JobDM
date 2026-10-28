@@ -31,13 +31,40 @@ export function normalizeSkills(skillsInput) {
 }
 
 /**
- * Stage 1: Deterministic Hard Eligibility Evaluation.
+ * Infers or standardizes the technical domain of a job post.
+ */
+export function inferJobDomain(job) {
+  if (job.target_domain && job.target_domain.trim()) {
+    return job.target_domain.toLowerCase().trim();
+  }
+  const text = `${job.title || ''} ${job.description || ''} ${job.skills || ''}`.toLowerCase();
+  if (text.includes('frontend') || text.includes('react') || text.includes('vue') || text.includes('angular') || text.includes('ui') || text.includes('html')) {
+    return 'frontend';
+  }
+  if (text.includes('backend') || text.includes('node') || text.includes('express') || text.includes('django') || text.includes('spring') || text.includes('java') || text.includes('sql') || text.includes('api')) {
+    return 'backend';
+  }
+  if (text.includes('data') || text.includes('machine learning') || text.includes('ai') || text.includes('pandas') || text.includes('pytorch') || text.includes('tensorflow') || text.includes('analyst')) {
+    return 'data_science';
+  }
+  if (text.includes('devops') || text.includes('cloud') || text.includes('docker') || text.includes('kubernetes') || text.includes('aws') || text.includes('ci/cd')) {
+    return 'devops';
+  }
+  if (text.includes('mobile') || text.includes('android') || text.includes('flutter') || text.includes('react native') || text.includes('ios')) {
+    return 'mobile';
+  }
+  return 'fullstack';
+}
+
+/**
+ * Stage 1: Deterministic Hard Eligibility Evaluation with Domain & Practice Verification.
  * 
  * Returns {
  *   isEligible: boolean,
  *   status: 'ELIGIBLE' | 'POTENTIALLY_ELIGIBLE' | 'NOT_ELIGIBLE' | 'ALREADY_APPLIED',
  *   reasons: string[],
- *   missingRequirements: string[]
+ *   missingRequirements: string[],
+ *   jobDomain: string
  * }
  */
 export function evaluateHardEligibility(job, candidateContext) {
@@ -45,6 +72,7 @@ export function evaluateHardEligibility(job, candidateContext) {
   const missingRequirements = [];
   let isPotentiallyEligible = false;
   let isNotEligible = false;
+  const jobDomain = inferJobDomain(job);
 
   // 1. Check if already applied
   if (candidateContext.hasApplied) {
@@ -52,7 +80,8 @@ export function evaluateHardEligibility(job, candidateContext) {
       isEligible: false,
       status: 'ALREADY_APPLIED',
       reasons: ['You have already applied for this position.'],
-      missingRequirements: []
+      missingRequirements: [],
+      jobDomain
     };
   }
 
@@ -62,7 +91,8 @@ export function evaluateHardEligibility(job, candidateContext) {
       isEligible: false,
       status: 'NOT_ELIGIBLE',
       reasons: ['This job post is currently closed or unlisted by the recruiter.'],
-      missingRequirements: ['Job opening inactive']
+      missingRequirements: ['Job opening inactive'],
+      jobDomain
     };
   }
 
@@ -74,7 +104,8 @@ export function evaluateHardEligibility(job, candidateContext) {
         isEligible: false,
         status: 'NOT_ELIGIBLE',
         reasons: [`Application deadline passed on ${deadlineDate.toLocaleDateString()}.`],
-        missingRequirements: ['Application deadline expired']
+        missingRequirements: ['Application deadline expired'],
+        jobDomain
       };
     }
   }
@@ -86,7 +117,8 @@ export function evaluateHardEligibility(job, candidateContext) {
         isEligible: false,
         status: 'NOT_ELIGIBLE',
         reasons: ['Position is restricted to students of another partner institution.'],
-        missingRequirements: ['Institution eligibility requirement']
+        missingRequirements: ['Institution eligibility requirement'],
+        jobDomain
       };
     }
   }
@@ -119,13 +151,58 @@ export function evaluateHardEligibility(job, candidateContext) {
     }
   }
 
+  // 7. Domain Alignment & Resume Skill Overlap Check
+  const jobReqSkills = normalizeSkills(job.skills);
+  const candidateSkills = new Set(normalizeSkills(candidateContext.skills));
+
+  // Extract candidate's practiced domains
+  const candidateDomains = new Set();
+  if (Array.isArray(candidateContext.practicedDomains)) {
+    for (const d of candidateContext.practicedDomains) {
+      if (d && d.domain) candidateDomains.add(d.domain.toLowerCase());
+    }
+  }
+  if (candidateContext.topDomain) {
+    candidateDomains.add(candidateContext.topDomain.toLowerCase());
+  }
+
+  // Check matching skills
+  let matchedSkillsCount = 0;
+  if (jobReqSkills.length > 0) {
+    matchedSkillsCount = jobReqSkills.filter(s => candidateSkills.has(s)).length;
+  }
+
+  // Check if candidate has practiced in this domain
+  const hasDomainPractice = candidateDomains.has(jobDomain) ||
+    (jobDomain === 'fullstack' && (candidateDomains.has('frontend') || candidateDomains.has('backend'))) ||
+    (jobDomain === 'frontend' && candidateDomains.has('fullstack')) ||
+    (jobDomain === 'backend' && candidateDomains.has('fullstack'));
+
+  // Strict domain and resume matching rule requested by user:
+  // If job has required skills and candidate has 0 matched resume skills AND has no practice in this domain:
+  if (jobReqSkills.length > 0 && matchedSkillsCount === 0 && !hasDomainPractice) {
+    isNotEligible = true;
+    reasons.push(
+      `Domain & Skill Mismatch: This opening requires ${job.title} skills (${jobReqSkills.slice(0, 3).join(', ')}). Your resume and mock interview practice do not show activity in the ${jobDomain} domain.`
+    );
+    missingRequirements.push(`Practice mock interviews in ${jobDomain} domain or add matching skills (${jobReqSkills.slice(0, 2).join(', ')}) to your resume`);
+  } else if (jobReqSkills.length > 0 && matchedSkillsCount === 0 && hasDomainPractice) {
+    // Has practice in domain, but resume lacks the explicit keywords
+    isPotentiallyEligible = true;
+    reasons.push(
+      `Practice Verified in ${jobDomain}: You have mock interview practice in this domain, but your resume lacks the specific required skills (${jobReqSkills.slice(0, 3).join(', ')}).`
+    );
+    missingRequirements.push(`Add verified skills (${jobReqSkills.slice(0, 3).join(', ')}) to your resume`);
+  }
+
   // Final Hard Eligibility Determination
   if (isNotEligible) {
     return {
       isEligible: false,
       status: 'NOT_ELIGIBLE',
       reasons,
-      missingRequirements
+      missingRequirements,
+      jobDomain
     };
   }
 
@@ -134,15 +211,17 @@ export function evaluateHardEligibility(job, candidateContext) {
       isEligible: false,
       status: 'POTENTIALLY_ELIGIBLE',
       reasons,
-      missingRequirements
+      missingRequirements,
+      jobDomain
     };
   }
 
   return {
     isEligible: true,
     status: 'ELIGIBLE',
-    reasons: ['All mandatory job requirements and institution qualifications satisfied.'],
-    missingRequirements: []
+    reasons: ['All mandatory job requirements, resume skills, and domain qualifications satisfied.'],
+    missingRequirements: [],
+    jobDomain
   };
 }
 
@@ -196,11 +275,28 @@ export function calculateSuitabilityScore(job, candidateContext) {
     }
   }
 
-  // 4. Interview Performance Score (Max 15 points)
+  // 4. Interview Performance & Domain Practice Score (Max 20 points)
   let interviewScorePart = 8;
   if (candidateContext.interviewScore != null) {
     // Map 0-100% score to 0-15 points
     interviewScorePart = Math.min(15, (candidateContext.interviewScore / 100) * 15);
+  }
+
+  // Domain practice alignment check
+  const jobDomain = inferJobDomain(job);
+  let domainPracticeBonus = 0;
+  let domainPracticeCount = 0;
+
+  if (Array.isArray(candidateContext.practicedDomains)) {
+    for (const d of candidateContext.practicedDomains) {
+      if (d && d.domain && (d.domain.includes(jobDomain) || jobDomain.includes(d.domain) || (jobDomain === 'fullstack' && (d.domain.includes('frontend') || d.domain.includes('backend'))))) {
+        domainPracticeCount += parseInt(d.count || 1, 10);
+      }
+    }
+  }
+
+  if (domainPracticeCount > 0) {
+    domainPracticeBonus = Math.min(10, 5 + domainPracticeCount * 2);
   }
 
   // 5. Coding Practice Score (Max 15 points)
@@ -210,7 +306,7 @@ export function calculateSuitabilityScore(job, candidateContext) {
   else if (solved >= 5) codingScorePart = 12;
   else if (solved >= 1) codingScorePart = 8;
 
-  const totalScore = Math.min(100, Math.round(reqSkillScore + prefSkillScore + roleScore + interviewScorePart + codingScorePart));
+  const totalScore = Math.min(100, Math.round(reqSkillScore + prefSkillScore + roleScore + interviewScorePart + domainPracticeBonus + codingScorePart));
 
   let tier = 'BASIC';
   if (totalScore >= 80) tier = 'HIGH';
@@ -220,7 +316,10 @@ export function calculateSuitabilityScore(job, candidateContext) {
   // Generate transparent explanation
   const explanations = [];
   if (matchedReqSkills.length > 0) {
-    explanations.push(`Matched ${matchedReqSkills.length}/${jobReqSkills.length} required skills (${matchedReqSkills.slice(0, 3).join(', ')})`);
+    explanations.push(`Matched ${matchedReqSkills.length}/${jobReqSkills.length} required resume skills (${matchedReqSkills.slice(0, 3).join(', ')})`);
+  }
+  if (domainPracticeCount > 0) {
+    explanations.push(`${domainPracticeCount} completed mock interview(s) in ${jobDomain} domain`);
   }
   if (matchedPrefSkills.length > 0) {
     explanations.push(`Possesses preferred skills (${matchedPrefSkills.slice(0, 2).join(', ')})`);
@@ -228,18 +327,20 @@ export function calculateSuitabilityScore(job, candidateContext) {
   if (candidateContext.interviewScore != null && candidateContext.interviewScore >= 75) {
     explanations.push(`Verified strong AI mock interview rating (${candidateContext.interviewScore}%)`);
   }
-  if (solved >= 3) {
-    explanations.push(`${solved} solved coding practice problems`);
+  if (solved >= 1) {
+    explanations.push(`${solved} solved coding practice problem(s)`);
   }
 
   const rationale = explanations.length > 0 
     ? `${totalScore}% Match: ` + explanations.join('; ') + '.'
-    : `${totalScore}% Match based on campus profile and role alignment.`;
+    : `${totalScore}% Match based on campus profile and domain alignment.`;
 
   return {
     score: totalScore,
     tier,
     matchedSkills: matchedReqSkills,
+    jobDomain,
+    domainPracticeCount,
     rationale
   };
 }
@@ -279,6 +380,7 @@ export function evaluateJobMatch(job, candidateContext) {
     deadline: job.deadline,
     collegeName: job.college_name,
     job,
+    jobDomain: hardEval.jobDomain,
     eligibilityStatus: hardEval.status,
     isEligible: hardEval.isEligible,
     recommendationSection,

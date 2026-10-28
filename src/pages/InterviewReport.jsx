@@ -90,15 +90,57 @@ export default function InterviewReport({ onNavigate }) {
     })
   )].slice(0, 8);
 
-  const verdict = parseFloat(overallScore) >= 8.5 ? 'Strong Hire'
-    : parseFloat(overallScore) >= 7.0 ? 'Hire'
-    : parseFloat(overallScore) >= 5.0 ? 'Needs Practice'
-    : overallScore ? 'Significant Work Needed' : 'Incomplete';
+  const [showAppealModal, setShowAppealModal] = useState(false);
+  const [appealReason, setAppealReason] = useState('');
+  const [appealCategory, setAppealCategory] = useState('TECHNICAL_ACCURACY');
+  const [isSubmittingAppeal, setIsSubmittingAppeal] = useState(false);
+  const [appealSuccess, setAppealSuccess] = useState('');
+  const [appealError, setAppealError] = useState('');
 
-  const verdictColor = verdict === 'Strong Hire' ? 'text-indigo-600 dark:text-indigo-400 border-indigo-300 dark:border-indigo-500/20 bg-emerald-500/10'
-    : verdict === 'Hire' ? 'text-indigo-600 dark:text-indigo-400 border-indigo-300 dark:border-indigo-500/20 bg-indigo-500/10'
-    : verdict === 'Needs Practice' ? 'text-indigo-600 dark:text-indigo-400 border-indigo-300 dark:border-indigo-500/20 bg-amber-500/10'
-    : 'text-indigo-600 dark:text-indigo-400 border-indigo-300 dark:border-indigo-500/20 bg-rose-500/10';
+  const handleAppealSubmit = async (e) => {
+    e.preventDefault();
+    if (!session?.id) return;
+    setIsSubmittingAppeal(true);
+    setAppealError('');
+    setAppealSuccess('');
+    try {
+      const token = localStorage.getItem('interviewiq_token');
+      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+      const res = await fetch(`${API_URL}/interviews/session/${session.id}/appeal`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          category: appealCategory,
+          reason: appealReason
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAppealError(data.error || 'Failed to submit appeal');
+      } else {
+        setAppealSuccess('Appeal submitted successfully! An academic evaluator will review your response.');
+        setAppealReason('');
+        setTimeout(() => setShowAppealModal(false), 2500);
+      }
+    } catch {
+      setAppealError('Network error while submitting appeal');
+    } finally {
+      setIsSubmittingAppeal(false);
+    }
+  };
+
+  const readiness = parseFloat(overallScore) >= 8.5 ? 'Exemplary Mastery'
+    : parseFloat(overallScore) >= 7.0 ? 'Proficient'
+    : parseFloat(overallScore) >= 5.0 ? 'Developing'
+    : overallScore ? 'Needs Practice' : 'Incomplete';
+
+  const readinessColor = readiness === 'Exemplary Mastery' ? 'text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-500/20 bg-emerald-500/10'
+    : readiness === 'Proficient' ? 'text-indigo-700 dark:text-indigo-300 border-indigo-300 dark:border-indigo-500/20 bg-indigo-500/10'
+    : readiness === 'Developing' ? 'text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-500/20 bg-amber-500/10'
+    : 'text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-500/20 bg-rose-500/10';
 
   return (
     <div className="max-w-5xl mx-auto space-y-8 animate-in fade-in duration-300">
@@ -114,15 +156,33 @@ export default function InterviewReport({ onNavigate }) {
         </button>
       </div>
 
+      {/* Practice Notice Banner */}
+      <div className="rounded-2xl p-4 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-xs text-slate-600 dark:text-slate-400">
+        <div className="space-y-1">
+          <p className="font-semibold text-slate-900 dark:text-white flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></span> Formative Practice Feedback
+          </p>
+          <p>
+            Scores reflect diagnostic practice metrics on job-related criteria. This is NOT an automated hiring decision. Official recruitment decisions are determined exclusively by human evaluators.
+          </p>
+        </div>
+        <button
+          onClick={() => setShowAppealModal(true)}
+          className="shrink-0 px-3.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-900/30 dark:hover:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 font-bold border border-indigo-200 dark:border-indigo-800 transition-colors"
+        >
+          Request Human Review / Appeal
+        </button>
+      </div>
+
       {/* Hero Score Banner */}
       <div className="rounded-3xl p-6 lg:p-8 bg-fuchsia-50 dark:bg-fuchsia-900/20 border border-fuchsia-200 dark:border-fuchsia-500/30 overflow-hidden space-y-6 shadow-sm">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="space-y-2">
             <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-fuchsia-100 dark:bg-fuchsia-500/20 border border-fuchsia-200 dark:border-fuchsia-500/30 text-fuchsia-800 dark:text-fuchsia-200 text-xs font-bold shadow-xs">
-              <CheckCircle2 className="w-3.5 h-3.5 text-fuchsia-600 dark:text-fuchsia-400" /> AI Interview Complete
+              <CheckCircle2 className="w-3.5 h-3.5 text-fuchsia-600 dark:text-fuchsia-400" /> AI Practice Session Complete
             </div>
             <h1 className="text-2xl lg:text-4xl font-black text-slate-900 dark:text-white font-['Outfit'] tracking-tight">
-              {session?.role || session?.category || 'Interview'} Report
+              {session?.role || session?.category || 'Interview'} Practice Report
             </h1>
             <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
               {session?.difficulty} Level • {validQAs.length} Questions • 
@@ -135,8 +195,8 @@ export default function InterviewReport({ onNavigate }) {
           <div className="flex items-center gap-5">
             <ScoreRing score={overallScore} size={90} />
             <div>
-              <span className="block text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider">Overall Score</span>
-              <span className={`mt-1 px-3 py-1 rounded-xl border text-sm font-black ${verdictColor}`}>{verdict}</span>
+              <span className="block text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider">Practice Readiness</span>
+              <span className={`mt-1 px-3 py-1 rounded-xl border text-sm font-black ${readinessColor}`}>{readiness}</span>
             </div>
           </div>
         </div>
@@ -342,6 +402,90 @@ export default function InterviewReport({ onNavigate }) {
           Start Another Interview
         </button>
       </div>
+
+      {/* Human Review / Appeal Modal */}
+      {showAppealModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Target className="w-5 h-5 text-indigo-600" /> Request Human Review / Appeal
+              </h3>
+              <button
+                onClick={() => setShowAppealModal(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-sm font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+              If an automated evaluation was affected by audio transcription inaccuracies or you feel your technical answer was misjudged, request a formal review by an academic tutor or human evaluator.
+            </p>
+
+            {appealSuccess && (
+              <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 text-xs font-semibold">
+                ✓ {appealSuccess}
+              </div>
+            )}
+
+            {appealError && (
+              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-200 text-xs font-semibold">
+                ⚠ {appealError}
+              </div>
+            )}
+
+            <form onSubmit={handleAppealSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Appeal Category
+                </label>
+                <select
+                  value={appealCategory}
+                  onChange={(e) => setAppealCategory(e.target.value)}
+                  className="w-full text-xs p-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                >
+                  <option value="TECHNICAL_ACCURACY">Technical Accuracy Discrepancy</option>
+                  <option value="AUDIO_TRANSCRIPTION">Speech / Audio Transcription Glitch</option>
+                  <option value="EVALUATION_DISCREPANCY">Model Rubric Discrepancy</option>
+                  <option value="OTHER">Other Reason</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Detailed Explanation
+                </label>
+                <textarea
+                  rows={4}
+                  required
+                  placeholder="Explain which question or score you are appealing and provide technical context..."
+                  value={appealReason}
+                  onChange={(e) => setAppealReason(e.target.value)}
+                  className="w-full text-xs p-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAppealModal(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingAppeal || appealReason.trim().length < 10}
+                  className="px-5 py-2 rounded-xl glow-btn text-white text-xs font-bold shadow-md disabled:opacity-50"
+                >
+                  {isSubmittingAppeal ? 'Submitting...' : 'Submit for Review'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
