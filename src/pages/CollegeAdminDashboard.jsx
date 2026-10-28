@@ -4,7 +4,7 @@ import {
   XCircle, Loader2, UserPlus, Trash2, GraduationCap,
   Activity, BrainCircuit, Code2, LineChart, PieChart, Star, Target, TrendingUp, Trophy, Zap, MessageSquare, Briefcase, Calendar, ChevronRight,
   Upload, Download, FileSpreadsheet, Key, RefreshCw, FileText, CheckCircle, AlertTriangle, Search,
-  Mail, Send, Copy
+  Mail, Send, Copy, Plus, Edit2, ExternalLink
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -51,6 +51,24 @@ export default function CollegeAdminDashboard({ initialTab = 'overview', onNavig
   const [batches, setBatches] = useState([]);
   const [tutors, setTutors] = useState([]);
   const [students, setStudents] = useState([]);
+  const [partnerCompanies, setPartnerCompanies] = useState([]);
+
+  // Partner Companies State
+  const [companySearch, setCompanySearch] = useState('');
+  const [companyTierFilter, setCompanyTierFilter] = useState('ALL');
+  const [showAddCompanyModal, setShowAddCompanyModal] = useState(false);
+  const [editingCompany, setEditingCompany] = useState(null);
+  const [companyFormData, setCompanyFormData] = useState({
+    company_name: '',
+    industry: 'Technology & Software',
+    recruiter_name: '',
+    recruiter_email: '',
+    partnership_status: 'ACTIVE',
+    tier: 'TIER_1',
+    website: '',
+    notes: '',
+    mou_signed: true
+  });
   
   // Analytics State
   const [overviewAnalytics, setOverviewAnalytics] = useState(null);
@@ -96,18 +114,20 @@ export default function CollegeAdminDashboard({ initialTab = 'overview', onNavig
   const loadInitialData = async () => {
     try {
       setLoading(true); setError('');
-      const [col, depts, bats, tuts, studs] = await Promise.all([
+      const [col, depts, bats, tuts, studs, comps] = await Promise.all([
         fetchApi('/college').catch(() => null),
         fetchApi('/departments').catch(() => []),
         fetchApi('/batches').catch(() => []),
         fetchApi('/tutors').catch(() => []),
-        fetchApi('/students').catch(() => [])
+        fetchApi('/students').catch(() => []),
+        fetchApi('/companies').catch(() => [])
       ]);
       if(col) setCollege(col);
       setDepartments(depts);
       setBatches(bats);
       setTutors(tuts);
       setStudents(studs);
+      setPartnerCompanies(comps || []);
     } catch (err) { setError(err.message); } 
     finally { setLoading(false); }
   };
@@ -124,14 +144,19 @@ export default function CollegeAdminDashboard({ initialTab = 'overview', onNavig
       try {
         setAnalyticsLoading(prev => ({ ...prev, [activeTab]: true }));
         if (activeTab === 'overview') {
-          const [ov, dom, act] = await Promise.all([
+          const [ov, dom, act, comps] = await Promise.all([
              fetchApi('/analytics/overview').catch(() => null),
              fetchApi('/analytics/domains').catch(() => []),
-             fetchApi('/analytics/activity').catch(() => [])
+             fetchApi('/analytics/activity').catch(() => []),
+             fetchApi('/companies').catch(() => [])
           ]);
           setOverviewAnalytics(ov);
           setDomainsAnalytics(dom || []);
           setActivityAnalytics(act || []);
+          if (comps) setPartnerCompanies(comps);
+        } else if (activeTab === 'companies') {
+          const comps = await fetchApi('/companies').catch(() => []);
+          setPartnerCompanies(comps || []);
         } else if (activeTab === 'departments') {
           const da = await fetchApi('/analytics/departments').catch(() => []);
           setDepartmentsAnalytics(da || []);
@@ -166,6 +191,97 @@ export default function CollegeAdminDashboard({ initialTab = 'overview', onNavig
       </div>
     );
   }
+
+  // PARTNER COMPANIES
+  const handleOpenAddCompany = () => {
+    setEditingCompany(null);
+    setCompanyFormData({
+      company_name: '',
+      industry: 'Technology & Software',
+      recruiter_name: '',
+      recruiter_email: '',
+      partnership_status: 'ACTIVE',
+      tier: 'TIER_1',
+      website: '',
+      notes: '',
+      mou_signed: true
+    });
+    setShowAddCompanyModal(true);
+  };
+
+  const handleOpenEditCompany = (c) => {
+    setEditingCompany(c);
+    setCompanyFormData({
+      company_name: c.company_name || '',
+      industry: c.industry || 'Technology & Software',
+      recruiter_name: c.recruiter_name || '',
+      recruiter_email: c.recruiter_email || '',
+      partnership_status: c.partnership_status || 'ACTIVE',
+      tier: c.tier || 'TIER_1',
+      website: c.website || '',
+      notes: c.notes || '',
+      mou_signed: !!c.mou_signed
+    });
+    setShowAddCompanyModal(true);
+  };
+
+  const handleSaveCompany = async (e) => {
+    e.preventDefault();
+    try {
+      setError('');
+      setLoading(true);
+      if (editingCompany) {
+        await fetchApi(`/companies/${editingCompany.id}`, 'PUT', companyFormData);
+      } else {
+        await fetchApi('/companies', 'POST', companyFormData);
+      }
+      setShowAddCompanyModal(false);
+      setEditingCompany(null);
+      const [comps, ov] = await Promise.all([
+        fetchApi('/companies').catch(() => []),
+        fetchApi('/analytics/overview').catch(() => null)
+      ]);
+      setPartnerCompanies(comps || []);
+      if (ov) setOverviewAnalytics(ov);
+    } catch (err) {
+      setError(err.message || 'Failed to save partner company.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteCompany = async (companyId, companyName) => {
+    if (!window.confirm(`Are you sure you want to remove "${companyName}" from partner companies?`)) return;
+    try {
+      setError('');
+      setLoading(true);
+      await fetchApi(`/companies/${companyId}`, 'DELETE');
+      const [comps, ov] = await Promise.all([
+        fetchApi('/companies').catch(() => []),
+        fetchApi('/analytics/overview').catch(() => null)
+      ]);
+      setPartnerCompanies(comps || []);
+      if (ov) setOverviewAnalytics(ov);
+    } catch (err) {
+      setError(err.message || 'Failed to delete partner company.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const filteredCompanies = useMemo(() => {
+    return partnerCompanies.filter(c => {
+      const q = companySearch.trim().toLowerCase();
+      const matchesSearch = !q || 
+        c.company_name?.toLowerCase().includes(q) ||
+        c.industry?.toLowerCase().includes(q) ||
+        c.recruiter_name?.toLowerCase().includes(q) ||
+        c.recruiter_email?.toLowerCase().includes(q);
+      
+      const matchesTier = companyTierFilter === 'ALL' || c.tier === companyTierFilter;
+      return matchesSearch && matchesTier;
+    });
+  }, [partnerCompanies, companySearch, companyTierFilter]);
 
   // DEPARTMENTS
   const handleSaveDepartment = async (e) => {
@@ -485,7 +601,7 @@ export default function CollegeAdminDashboard({ initialTab = 'overview', onNavig
 
       {/* TABS */}
       <div className="flex gap-2 border-b border-slate-300 dark:border-white/10 pb-2 overflow-x-auto">
-        {['overview', 'bulk-provision', 'college', 'departments', 'batches', 'tutors', 'students'].map(t => (
+        {['overview', 'companies', 'bulk-provision', 'college', 'departments', 'batches', 'tutors', 'students'].map(t => (
           <button 
             key={t}
             onClick={() => { 
@@ -495,6 +611,7 @@ export default function CollegeAdminDashboard({ initialTab = 'overview', onNavig
               if (onNavigate) {
                 const navMap = {
                   'overview': 'college-admin-overview',
+                  'companies': 'college-admin-companies',
                   'bulk-provision': 'college-admin-bulk',
                   'college': 'college-admin-college',
                   'departments': 'college-admin-departments',
@@ -510,7 +627,8 @@ export default function CollegeAdminDashboard({ initialTab = 'overview', onNavig
             }`}
           >
             {t === 'bulk-provision' && <FileSpreadsheet className="w-4 h-4 text-emerald-400" />}
-            {t === 'bulk-provision' ? 'Bulk Onboarding' : t}
+            {t === 'companies' && <Briefcase className="w-4 h-4 text-amber-400" />}
+            {t === 'bulk-provision' ? 'Bulk Onboarding' : t === 'companies' ? 'Partner Companies' : t}
           </button>
         ))}
       </div>
@@ -566,12 +684,35 @@ export default function CollegeAdminDashboard({ initialTab = 'overview', onNavig
                     <p className="text-sm text-slate-600 dark:text-slate-400 font-medium">Coding Solved</p>
                     <h3 className="text-2xl font-bold">{overviewAnalytics.coding?.totalSolved || 0}</h3>
                   </div>
-                  <div className="glass-card p-4 rounded-2xl flex flex-col gap-2 col-span-2 md:col-span-1 xl:col-span-2">
+                  <div className="glass-card p-4 rounded-2xl flex flex-col gap-2">
                     <Target className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
-                    <p className="text-sm text-slate-600 dark:text-slate-400 font-medium">Daily Task Completion</p>
+                    <p className="text-sm text-slate-600 dark:text-slate-400 font-medium">Daily Task Rate</p>
                     <h3 className="text-2xl font-bold">
                       {overviewAnalytics.dailyTask?.completionRate !== null ? `${Math.round(overviewAnalytics.dailyTask.completionRate)}%` : '0%'}
                     </h3>
+                  </div>
+                  <div 
+                    onClick={() => { 
+                      setActiveTab('companies'); 
+                      if (onNavigate) onNavigate('college-admin-companies'); 
+                    }}
+                    className="glass-card p-4 rounded-2xl flex flex-col gap-2 cursor-pointer hover:border-amber-500/50 hover:bg-amber-500/5 transition-all group col-span-2 md:col-span-1 xl:col-span-1"
+                  >
+                    <div className="flex items-center justify-between">
+                      <Briefcase className="w-5 h-5 text-amber-500 group-hover:scale-110 transition-transform" />
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                        {overviewAnalytics.partnerCompanies?.totalDrives || 0} Drives
+                      </span>
+                    </div>
+                    <p className="text-sm text-slate-600 dark:text-slate-400 font-medium">Partner Companies</p>
+                    <div className="flex items-baseline justify-between">
+                      <h3 className="text-2xl font-bold text-slate-900 dark:text-white">
+                        {overviewAnalytics.partnerCompanies?.total || partnerCompanies.length || 0}
+                      </h3>
+                      <span className="text-xs text-amber-600 dark:text-amber-400 font-semibold group-hover:translate-x-0.5 transition-transform flex items-center">
+                        View List <ChevronRight className="w-3 h-3 ml-0.5" />
+                      </span>
+                    </div>
                   </div>
                 </div>
               )}
@@ -628,7 +769,455 @@ export default function CollegeAdminDashboard({ initialTab = 'overview', onNavig
                   </div>
                 </div>
               </div>
+
+              {/* Partner Companies Campus Recruitment Preview */}
+              {partnerCompanies.length > 0 && (
+                <div className="glass-card rounded-2xl p-6 border border-amber-500/20 bg-gradient-to-r from-amber-500/5 via-indigo-500/5 to-transparent mt-6">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                          Campus Recruitment Network
+                        </span>
+                        <span className="text-xs text-slate-500">
+                          {partnerCompanies.length} Official Corporate Partners
+                        </span>
+                      </div>
+                      <h3 className="text-lg font-bold text-slate-900 dark:text-white mt-1 flex items-center gap-2">
+                        <Briefcase className="w-5 h-5 text-amber-500" />
+                        Affiliated Companies & Placement Drives
+                      </h3>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setActiveTab('companies');
+                        if (onNavigate) onNavigate('college-admin-companies');
+                      }}
+                      className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 transition-colors shadow-sm flex items-center gap-1.5"
+                    >
+                      <span>Manage All Companies</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                    {partnerCompanies.slice(0, 4).map((c) => (
+                      <div key={c.id} className="p-4 rounded-xl bg-white dark:bg-white/5 border border-slate-200 dark:border-white/10 hover:border-amber-500/30 transition-all flex flex-col justify-between">
+                        <div>
+                          <div className="flex items-start justify-between gap-2">
+                            <h4 className="font-bold text-sm text-slate-900 dark:text-white truncate">{c.company_name}</h4>
+                            <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded ${
+                              c.tier === 'TIER_1' ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20' :
+                              c.tier === 'TIER_2' ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20' :
+                              'bg-slate-500/10 text-slate-600 dark:text-slate-400'
+                            }`}>
+                              {c.tier?.replace('_', ' ') || 'TIER 1'}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-500 mt-0.5 truncate">{c.industry || 'Technology'}</p>
+                        </div>
+                        <div className="mt-3 pt-2.5 border-t border-slate-200 dark:border-white/5 flex items-center justify-between text-xs">
+                          <span className="text-slate-600 dark:text-slate-400 font-medium">
+                            {c.drives_count || (c.active_drives?.length || 0)} Campus Drives
+                          </span>
+                          <span className="font-bold text-amber-600 dark:text-amber-400">
+                            {c.applicants_count || 0} Applied
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </>
+          )}
+        </div>
+      )}
+
+      {/* PARTNER COMPANIES TAB */}
+      {activeTab === 'companies' && (
+        <div className="space-y-6">
+          {/* Header */}
+          <div className="glass-card p-6 rounded-2xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border border-amber-500/20 bg-gradient-to-r from-amber-500/5 via-indigo-500/5 to-transparent">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                  Campus Placement Network
+                </span>
+                <span className="text-xs text-slate-500">Institution: {college?.name} ({college?.code})</span>
+              </div>
+              <h2 className="text-xl font-bold flex items-center gap-2 text-slate-900 dark:text-white">
+                <Briefcase className="w-5 h-5 text-amber-500" />
+                Corporate Partners & Recruitment Network
+              </h2>
+              <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 max-w-2xl">
+                View and manage companies affiliated with your college, active placement drives, student applicants, and corporate recruiter relationships.
+              </p>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <button
+                onClick={handleOpenAddCompany}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 transition-colors flex items-center gap-2 shadow-lg shadow-amber-500/20"
+              >
+                <Plus className="w-4 h-4" />
+                Add Partner Company
+              </button>
+            </div>
+          </div>
+
+          {/* Quick Metrics */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="glass-card p-4 rounded-2xl">
+              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">Total Companies</p>
+              <h3 className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{partnerCompanies.length}</h3>
+              <p className="text-[11px] text-amber-500 font-semibold mt-1">Official Hiring Partners</p>
+            </div>
+            <div className="glass-card p-4 rounded-2xl">
+              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">Active Campus Drives</p>
+              <h3 className="text-2xl font-bold text-slate-900 dark:text-white mt-1">
+                {partnerCompanies.reduce((acc, c) => acc + (c.active_drives?.length || 0), 0)}
+              </h3>
+              <p className="text-[11px] text-emerald-500 font-semibold mt-1">Accepting Applications</p>
+            </div>
+            <div className="glass-card p-4 rounded-2xl">
+              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">Student Applications</p>
+              <h3 className="text-2xl font-bold text-slate-900 dark:text-white mt-1">
+                {partnerCompanies.reduce((acc, c) => acc + (parseInt(c.applicants_count) || 0), 0)}
+              </h3>
+              <p className="text-[11px] text-indigo-500 font-semibold mt-1">Across all drives</p>
+            </div>
+            <div className="glass-card p-4 rounded-2xl">
+              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">MOU Signed</p>
+              <h3 className="text-2xl font-bold text-slate-900 dark:text-white mt-1">
+                {partnerCompanies.filter(c => c.mou_signed).length}
+              </h3>
+              <p className="text-[11px] text-purple-500 font-semibold mt-1">Formal Partnerships</p>
+            </div>
+          </div>
+
+          {/* Search & Filter Bar */}
+          <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3">
+            <div className="relative flex-1 max-w-md">
+              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search companies by name, industry, or recruiter..."
+                value={companySearch}
+                onChange={(e) => setCompanySearch(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 rounded-xl text-xs bg-white dark:bg-white/5 border border-slate-300 dark:border-white/10 text-slate-900 dark:text-white outline-none focus:border-amber-500"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                value={companyTierFilter}
+                onChange={(e) => setCompanyTierFilter(e.target.value)}
+                className="px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 text-slate-700 dark:text-slate-200 outline-none"
+              >
+                <option value="ALL">All Partnership Tiers</option>
+                <option value="TIER_1">Tier 1 Partners</option>
+                <option value="TIER_2">Tier 2 Partners</option>
+                <option value="TIER_3">Tier 3 Partners</option>
+                <option value="STARTUP">Startup Partners</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Companies Cards Grid */}
+          {analyticsLoading.companies ? (
+            <div className="flex items-center justify-center p-12"><Loader2 className="w-8 h-8 animate-spin text-amber-500" /></div>
+          ) : filteredCompanies.length === 0 ? (
+            <div className="glass-card rounded-2xl p-12 text-center text-slate-500 space-y-3">
+              <Briefcase className="w-12 h-12 mx-auto text-slate-400 opacity-50" />
+              <p className="font-semibold text-slate-700 dark:text-slate-300">No partner companies found</p>
+              <p className="text-xs">Add your first campus recruiting company or adjust your search filter.</p>
+              <button
+                onClick={handleOpenAddCompany}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 text-slate-950 inline-flex items-center gap-1.5 mt-2"
+              >
+                <Plus className="w-4 h-4" /> Add Partner Company
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              {filteredCompanies.map((c) => (
+                <div key={c.id} className="glass-card rounded-2xl p-5 border border-slate-200 dark:border-white/10 hover:border-amber-500/40 transition-all flex flex-col justify-between space-y-4">
+                  {/* Card Top */}
+                  <div>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-amber-500/20 to-indigo-500/20 border border-amber-500/30 flex items-center justify-center font-bold text-amber-500 text-base shadow-sm shrink-0">
+                          {c.company_name?.charAt(0) || 'C'}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-bold text-base text-slate-900 dark:text-white leading-tight">
+                              {c.company_name}
+                            </h3>
+                            {c.website && (
+                              <a
+                                href={c.website.startsWith('http') ? c.website : `https://${c.website}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-slate-400 hover:text-amber-500 transition-colors"
+                                title="Visit company website"
+                              >
+                                <ExternalLink className="w-3.5 h-3.5" />
+                              </a>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-500 font-medium">{c.industry || 'Technology & Services'}</p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col items-end gap-1.5 shrink-0">
+                        <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
+                          c.tier === 'TIER_1' ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20' :
+                          c.tier === 'TIER_2' ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20' :
+                          'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
+                        }`}>
+                          {c.tier?.replace('_', ' ') || 'TIER 1'}
+                        </span>
+                        {c.mou_signed && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3" /> MOU Signed
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Recruiter Contact */}
+                    {(c.recruiter_name || c.recruiter_email) && (
+                      <div className="mt-3 p-2.5 rounded-xl bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/5 flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <div className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
+                          <Users className="w-3.5 h-3.5 text-indigo-500" />
+                          <span className="font-semibold">{c.recruiter_name || 'Campus Recruiter'}</span>
+                        </div>
+                        {c.recruiter_email && (
+                          <a
+                            href={`mailto:${c.recruiter_email}`}
+                            className="flex items-center gap-1 text-indigo-600 dark:text-indigo-400 hover:underline font-mono text-[11px]"
+                          >
+                            <Mail className="w-3 h-3" />
+                            {c.recruiter_email}
+                          </a>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Notes */}
+                    {c.notes && (
+                      <p className="text-xs text-slate-500 italic mt-2.5 line-clamp-2">
+                        "{c.notes}"
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Active Campus Drives List */}
+                  <div className="pt-3 border-t border-slate-200 dark:border-white/10 space-y-2">
+                    <div className="flex items-center justify-between text-xs font-semibold text-slate-500">
+                      <span>Active Campus Drives ({c.active_drives?.length || 0})</span>
+                      <span className="text-amber-600 dark:text-amber-400 font-bold">
+                        {c.applicants_count || 0} Student Applicants
+                      </span>
+                    </div>
+
+                    {c.active_drives && c.active_drives.length > 0 ? (
+                      <div className="space-y-1.5">
+                        {c.active_drives.map((drive) => (
+                          <div
+                            key={drive.id}
+                            className="p-2.5 rounded-lg bg-indigo-50/50 dark:bg-white/[0.03] border border-indigo-100 dark:border-white/5 flex items-center justify-between gap-2 text-xs"
+                          >
+                            <div className="min-w-0">
+                              <p className="font-semibold text-slate-800 dark:text-slate-200 truncate">{drive.title}</p>
+                              <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                                <span>{drive.role || 'Software Engineering'}</span>
+                                {drive.ctc && <span>• {drive.ctc}</span>}
+                              </div>
+                            </div>
+                            <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                              {drive.applicants || 0} Applied
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="p-2 text-center text-xs text-slate-400 bg-slate-50 dark:bg-white/[0.02] rounded-lg">
+                        No active campus drives posted yet.
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Actions Footer */}
+                  <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-white/5">
+                    <button
+                      onClick={() => handleOpenEditCompany(c)}
+                      className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/5 hover:bg-white/10 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-white/10 flex items-center gap-1.5 transition-colors"
+                    >
+                      <Edit2 className="w-3.5 h-3.5 text-indigo-400" />
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => handleDeleteCompany(c.id, c.company_name)}
+                      className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/20 flex items-center gap-1.5 transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Add / Edit Partner Company Modal */}
+          {showAddCompanyModal && (
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="glass-card w-full max-w-lg rounded-2xl p-6 border border-white/10 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+                <div className="flex items-center justify-between pb-3 border-b border-white/10">
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <Briefcase className="w-5 h-5 text-amber-500" />
+                    {editingCompany ? 'Edit Partner Company' : 'Add Partner Company'}
+                  </h3>
+                  <button
+                    onClick={() => { setShowAddCompanyModal(false); setEditingCompany(null); }}
+                    className="text-slate-400 hover:text-white"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <form onSubmit={handleSaveCompany} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                      Company Name *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={companyFormData.company_name}
+                      onChange={(e) => setCompanyFormData({ ...companyFormData, company_name: e.target.value })}
+                      placeholder="e.g. Tata Consultancy Services (TCS), Infosys, Google"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white outline-none focus:border-amber-500"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                        Industry / Domain
+                      </label>
+                      <input
+                        type="text"
+                        value={companyFormData.industry}
+                        onChange={(e) => setCompanyFormData({ ...companyFormData, industry: e.target.value })}
+                        placeholder="e.g. Information Technology, Cloud & AI"
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white outline-none focus:border-amber-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                        Partnership Tier
+                      </label>
+                      <select
+                        value={companyFormData.tier}
+                        onChange={(e) => setCompanyFormData({ ...companyFormData, tier: e.target.value })}
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white outline-none focus:border-amber-500"
+                      >
+                        <option value="TIER_1">Tier 1 (Enterprise / Mass Recruiter)</option>
+                        <option value="TIER_2">Tier 2 (Mid-Market / Regional)</option>
+                        <option value="TIER_3">Tier 3 (Niche / Specialist)</option>
+                        <option value="STARTUP">Startup Partner</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                        Campus Recruiter Name
+                      </label>
+                      <input
+                        type="text"
+                        value={companyFormData.recruiter_name}
+                        onChange={(e) => setCompanyFormData({ ...companyFormData, recruiter_name: e.target.value })}
+                        placeholder="e.g. Priya Sharma"
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white outline-none focus:border-amber-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                        Recruiter Email
+                      </label>
+                      <input
+                        type="email"
+                        value={companyFormData.recruiter_email}
+                        onChange={(e) => setCompanyFormData({ ...companyFormData, recruiter_email: e.target.value })}
+                        placeholder="e.g. campus.recruitment@company.com"
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white outline-none focus:border-amber-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                      Website URL
+                    </label>
+                    <input
+                      type="text"
+                      value={companyFormData.website}
+                      onChange={(e) => setCompanyFormData({ ...companyFormData, website: e.target.value })}
+                      placeholder="https://company.com"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white outline-none focus:border-amber-500"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="mou_signed_checkbox"
+                      checked={companyFormData.mou_signed}
+                      onChange={(e) => setCompanyFormData({ ...companyFormData, mou_signed: e.target.checked })}
+                      className="w-4 h-4 accent-amber-500 rounded"
+                    />
+                    <label htmlFor="mou_signed_checkbox" className="text-xs font-semibold text-slate-300 cursor-pointer">
+                      Official Campus Recruitment MOU Signed
+                    </label>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                      Internal Notes / Placement Criteria
+                    </label>
+                    <textarea
+                      rows="2"
+                      value={companyFormData.notes}
+                      onChange={(e) => setCompanyFormData({ ...companyFormData, notes: e.target.value })}
+                      placeholder="e.g. Minimum 65% aggregate, conducts online coding round then technical PI."
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white outline-none focus:border-amber-500 resize-none"
+                    />
+                  </div>
+
+                  <div className="flex justify-end gap-3 pt-3 border-t border-white/10">
+                    <button
+                      type="button"
+                      onClick={() => { setShowAddCompanyModal(false); setEditingCompany(null); }}
+                      className="px-4 py-2 rounded-xl text-xs font-semibold bg-white/5 hover:bg-white/10 text-slate-300"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="px-5 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center gap-1.5 shadow-lg shadow-amber-500/20 disabled:opacity-50"
+                    >
+                      {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                      <span>{editingCompany ? 'Update Partner Company' : 'Save Partner Company'}</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
           )}
         </div>
       )}

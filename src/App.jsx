@@ -160,6 +160,9 @@ export function AppContent() {
       case 'college-admin-overview':
         if (!isCollegeAdmin) return <AccessDenied role={role} onNavigate={handleNavigate} />;
         return <CollegeAdminDashboard initialTab="overview" onNavigate={handleNavigate} />;
+      case 'college-admin-companies':
+        if (!isCollegeAdmin) return <AccessDenied role={role} onNavigate={handleNavigate} />;
+        return <CollegeAdminDashboard initialTab="companies" onNavigate={handleNavigate} />;
       case 'college-admin-bulk':
         if (!isCollegeAdmin) return <AccessDenied role={role} onNavigate={handleNavigate} />;
         return <CollegeAdminDashboard initialTab="bulk-provision" onNavigate={handleNavigate} />;

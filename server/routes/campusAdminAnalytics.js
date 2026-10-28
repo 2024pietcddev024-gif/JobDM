@@ -74,6 +74,18 @@ router.get('/overview', async (req, res) => {
 
     const totalStudents = parseInt(sRes.rows[0].count, 10);
     const completedStudents = parseInt(dailyRes.rows[0].count, 10);
+
+    // Partner Companies Analytics
+    const compRes = await pool.query(`
+      SELECT 
+        COUNT(DISTINCT cpc.id) as total_companies,
+        COUNT(DISTINCT j.id) as total_drives,
+        COUNT(DISTINCT a.id) as total_applications
+      FROM college_partner_companies cpc
+      LEFT JOIN hr_jobs j ON j.college_id = $1 AND j.status = 'OPEN'
+      LEFT JOIN hr_applications a ON a.job_id = j.id
+      WHERE cpc.college_id = $1
+    `, [collegeId]).catch(() => ({ rows: [{ total_companies: 0, total_drives: 0, total_applications: 0 }] }));
     
     res.json({
       college: cRes.rows[0],
@@ -82,6 +94,11 @@ router.get('/overview', async (req, res) => {
       tutors: parseInt(tRes.rows[0].count, 10),
       students: totalStudents,
       activeStudents: parseInt(activeRes.rows[0].count, 10),
+      partnerCompanies: {
+        total: parseInt(compRes.rows[0]?.total_companies || 0, 10),
+        totalDrives: parseInt(compRes.rows[0]?.total_drives || 0, 10),
+        totalApplications: parseInt(compRes.rows[0]?.total_applications || 0, 10)
+      },
       interviews: {
         total: parseInt(interviewsRes.rows[0].total, 10),
         averageScore: interviewsRes.rows[0].avg_score ? parseFloat(interviewsRes.rows[0].avg_score) : null

@@ -23,6 +23,7 @@ export default function Sidebar({ currentPage, onNavigate, isSidebarOpen }) {
   } else if (user?.campus?.role === 'COLLEGE_ADMIN') {
     menuItems = [
       { id: 'college-admin-overview', label: 'Admin Overview', icon: LayoutDashboard },
+      { id: 'college-admin-companies', label: 'Partner Companies', icon: Briefcase, badge: 'Hiring' },
       { id: 'college-admin-bulk', label: 'Bulk Onboarding', icon: FileSpreadsheet, badge: 'Roster' },
       { id: 'college-admin-college', label: 'College Info', icon: Building2 },
       { id: 'college-admin-departments', label: 'Departments', icon: BookOpen },

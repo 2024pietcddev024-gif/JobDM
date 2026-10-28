@@ -620,4 +620,119 @@ router.post('/users/:userId/reset-password', async (req, res) => {
   }
 });
 
+// 11. PARTNER COMPANIES & PLACEMENT DRIVES
+router.get('/companies', async (req, res) => {
+  const collegeId = req.campusContext.college_id;
+  try {
+    const result = await pool.query(`
+      SELECT 
+        cpc.*,
+        COUNT(DISTINCT j.id) as open_jobs_count,
+        COUNT(DISTINCT a.id) as applications_count,
+        COUNT(DISTINCT CASE WHEN a.status = 'SHORTLISTED' OR a.status = 'OFFERED' THEN a.id END) as shortlisted_count
+      FROM college_partner_companies cpc
+      LEFT JOIN hr_jobs j ON j.partner_company_id = cpc.id AND j.status = 'OPEN'
+      LEFT JOIN hr_applications a ON a.job_id = j.id
+      WHERE cpc.college_id = $1
+      GROUP BY cpc.id
+      ORDER BY cpc.created_at DESC
+    `, [collegeId]);
+
+    const companies = result.rows;
+    for (const comp of companies) {
+      const jobsRes = await pool.query(`
+        SELECT id, title, location, job_type, workplace_type, target_domain, status, created_at,
+               (SELECT COUNT(*) FROM hr_applications WHERE job_id = hr_jobs.id) as total_applicants
+        FROM hr_jobs
+        WHERE partner_company_id = $1 OR (college_id = $2 AND LOWER(company_name) = LOWER($3))
+        ORDER BY created_at DESC
+      `, [comp.id, collegeId, comp.company_name]);
+      comp.drives = jobsRes.rows;
+    }
+
+    res.json(companies);
+  } catch (error) {
+    console.error('[GET /companies] error:', error);
+    res.status(500).json({ error: 'Server error loading partner companies' });
+  }
+});
+
+router.post('/companies', async (req, res) => {
+  const collegeId = req.campusContext.college_id;
+  const { 
+    company_name, industry, recruiter_name, recruiter_email, 
+    partnership_status = 'ACTIVE', tier = 'TIER_1', website, notes, mou_signed = true 
+  } = req.body || {};
+
+  if (!company_name || !company_name.trim()) {
+    return res.status(400).json({ error: 'Company name is required' });
+  }
+
+  try {
+    const newComp = await pool.query(`
+      INSERT INTO college_partner_companies (
+        college_id, company_name, industry, recruiter_name, recruiter_email,
+        partnership_status, tier, website, notes, mou_signed, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+      RETURNING *
+    `, [
+      collegeId, company_name.trim(), industry || 'Information Technology',
+      recruiter_name || null, recruiter_email || null,
+      partnership_status, tier, website || null, notes || null, Boolean(mou_signed)
+    ]);
+
+    res.status(201).json(newComp.rows[0]);
+  } catch (error) {
+    console.error('[POST /companies] error:', error);
+    res.status(500).json({ error: 'Failed to add partner company' });
+  }
+});
+
+router.put('/companies/:id', async (req, res) => {
+  const collegeId = req.campusContext.college_id;
+  const { id } = req.params;
+  const { company_name, industry, recruiter_name, recruiter_email, partnership_status, tier, website, notes, mou_signed } = req.body || {};
+
+  try {
+    const updated = await pool.query(`
+      UPDATE college_partner_companies
+      SET company_name = COALESCE($1, company_name),
+          industry = COALESCE($2, industry),
+          recruiter_name = COALESCE($3, recruiter_name),
+          recruiter_email = COALESCE($4, recruiter_email),
+          partnership_status = COALESCE($5, partnership_status),
+          tier = COALESCE($6, tier),
+          website = COALESCE($7, website),
+          notes = COALESCE($8, notes),
+          mou_signed = COALESCE($9, mou_signed),
+          updated_at = NOW()
+      WHERE id = $10 AND college_id = $11
+      RETURNING *
+    `, [company_name, industry, recruiter_name, recruiter_email, partnership_status, tier, website, notes, mou_signed, id, collegeId]);
+
+    if (updated.rows.length === 0) return res.status(404).json({ error: 'Partner company not found' });
+    res.json(updated.rows[0]);
+  } catch (error) {
+    console.error('[PUT /companies/:id] error:', error);
+    res.status(500).json({ error: 'Failed to update partner company' });
+  }
+});
+
+router.delete('/companies/:id', async (req, res) => {
+  const collegeId = req.campusContext.college_id;
+  const { id } = req.params;
+
+  try {
+    const deleted = await pool.query(
+      'DELETE FROM college_partner_companies WHERE id = $1 AND college_id = $2 RETURNING id',
+      [id, collegeId]
+    );
+    if (deleted.rows.length === 0) return res.status(404).json({ error: 'Partner company not found' });
+    res.json({ message: 'Partner company removed successfully', id });
+  } catch (error) {
+    console.error('[DELETE /companies/:id] error:', error);
+    res.status(500).json({ error: 'Failed to delete partner company' });
+  }
+});
+
 export default router;

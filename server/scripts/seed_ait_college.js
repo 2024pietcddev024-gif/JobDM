@@ -254,8 +254,194 @@ async function seed() {
     console.log(`✅ Student Provisioned & Enrolled: ${st.name} (${st.email}) -> ${st.batch}`);
   }
 
+  // 7. Seed Partner Companies and Campus Placement Drives
+  console.log('\n🏢 Seeding Partner Companies & Campus Drives for AIT Jaipur...');
+  const partnerCompaniesData = [
+    {
+      company_name: 'Tata Consultancy Services (TCS)',
+      industry: 'IT Services & Consulting',
+      recruiter_name: 'Pooja Deshmukh',
+      recruiter_email: 'campus.relations@tcs.com',
+      partnership_status: 'ACTIVE',
+      tier: 'TIER_1',
+      website: 'https://www.tcs.com',
+      notes: 'Annual campus recruitment MoU active. Ninja & Digital hiring partner.',
+      job: {
+        title: 'Assistant Systems Engineer (TCS Digital)',
+        description: 'Design and develop scalable cloud microservices, APIs, and modern web applications for enterprise clients.',
+        skills: 'Java, Python, SQL, REST APIs',
+        location: 'Jaipur / Noida',
+        experience_level: 'Entry Level (Fresher)',
+        job_type: 'Full Time',
+        workplace_type: 'Hybrid',
+        target_domain: 'fullstack',
+        min_cgpa: 7.0,
+        min_interview_score: 75,
+        min_coding_solved: 5
+      }
+    },
+    {
+      company_name: 'Infosys Limited',
+      industry: 'Cloud, AI & Digital Transformation',
+      recruiter_name: 'Vikramaditya Sengupta',
+      recruiter_email: 'campus.hiring@infosys.com',
+      partnership_status: 'ACTIVE',
+      tier: 'TIER_1',
+      website: 'https://www.infosys.com',
+      notes: 'Specialist Programmer (Power Programmer) campus drive.',
+      job: {
+        title: 'Specialist Programmer (AI & Full Stack)',
+        description: 'Lead engineering projects leveraging generative AI, data engineering pipelines, and modern frontend frameworks.',
+        skills: 'React, Node.js, Python, Machine Learning',
+        location: 'Bangalore / Hybrid',
+        experience_level: 'Entry Level (Fresher)',
+        job_type: 'Full Time',
+        workplace_type: 'Hybrid',
+        target_domain: 'ai',
+        min_cgpa: 7.5,
+        min_interview_score: 80,
+        min_coding_solved: 10
+      }
+    },
+    {
+      company_name: 'Wipro Technologies',
+      industry: 'IT Consulting & Enterprise Cloud',
+      recruiter_name: 'Sunil Nair',
+      recruiter_email: 'talent.acquisition@wipro.com',
+      partnership_status: 'MOU_SIGNED',
+      tier: 'TIER_1',
+      website: 'https://www.wipro.com',
+      notes: 'Turbo campus hiring program with advanced certification sponsorship.',
+      job: {
+        title: 'Project Engineer (Cloud & DevOps)',
+        description: 'Implement automated CI/CD pipelines, container orchestration, and cloud infrastructure monitoring.',
+        skills: 'Linux, Docker, Python, AWS basics',
+        location: 'Pune / Remote',
+        experience_level: 'Entry Level (Fresher)',
+        job_type: 'Full Time',
+        workplace_type: 'Remote',
+        target_domain: 'backend',
+        min_cgpa: 6.8,
+        min_interview_score: 70,
+        min_coding_solved: 5
+      }
+    },
+    {
+      company_name: 'Zomato / Blinkit Tech',
+      industry: 'Consumer Tech & Quick Commerce',
+      recruiter_name: 'Rohan Kumar',
+      recruiter_email: 'campus.recruiter@zomato.com',
+      partnership_status: 'ACTIVE',
+      tier: 'PRODUCT_MNC',
+      website: 'https://www.zomato.com',
+      notes: 'Product Engineering hiring for high-throughput distributed order management.',
+      job: {
+        title: 'Associate Software Engineer (Backend Systems)',
+        description: 'Build ultra low-latency services handling millions of concurrent orders, real-time geolocation, and dispatch algorithms.',
+        skills: 'Go, Java, PostgreSQL, Redis, Kafka',
+        location: 'Gurgaon / Hybrid',
+        experience_level: 'Entry Level (Fresher)',
+        job_type: 'Full Time',
+        workplace_type: 'Hybrid',
+        target_domain: 'backend',
+        min_cgpa: 8.0,
+        min_interview_score: 85,
+        min_coding_solved: 15
+      }
+    }
+  ];
+
+  // Resolve an HR user or Admin as creator
+  const hrUserRes = await query("SELECT id FROM users WHERE email LIKE '%hr%ait%' LIMIT 1");
+  const jobCreatorId = hrUserRes.rows[0]?.id || adminId;
+
+  // Resolve Aarav and Diya for test applications
+  const aaravRes = await query("SELECT id FROM users WHERE email = 'aarav.sharma@aitjaipur.edu' LIMIT 1");
+  const diyaRes = await query("SELECT id FROM users WHERE email = 'diya.patel@aitjaipur.edu' LIMIT 1");
+  const ishitaRes = await query("SELECT id FROM users WHERE email = 'ishita.singhal@aitjaipur.edu' LIMIT 1");
+
+  for (const comp of partnerCompaniesData) {
+    let compRes = await query(
+      'SELECT id FROM college_partner_companies WHERE college_id = $1 AND LOWER(company_name) = LOWER($2)',
+      [collegeId, comp.company_name]
+    );
+    let companyId;
+    if (compRes.rows.length > 0) {
+      companyId = compRes.rows[0].id;
+      await query(
+        `UPDATE college_partner_companies 
+         SET industry = $1, recruiter_name = $2, recruiter_email = $3, partnership_status = $4, tier = $5, website = $6, notes = $7, updated_at = NOW()
+         WHERE id = $8`,
+        [comp.industry, comp.recruiter_name, comp.recruiter_email, comp.partnership_status, comp.tier, comp.website, comp.notes, companyId]
+      );
+    } else {
+      const newComp = await query(
+        `INSERT INTO college_partner_companies (
+           college_id, company_name, industry, recruiter_name, recruiter_email, partnership_status, tier, website, notes, mou_signed
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE)
+         RETURNING id`,
+        [collegeId, comp.company_name, comp.industry, comp.recruiter_name, comp.recruiter_email, comp.partnership_status, comp.tier, comp.website, comp.notes]
+      );
+      companyId = newComp.rows[0].id;
+    }
+
+    // Seed active placement drive job
+    const j = comp.job;
+    let jobCheck = await query(
+      'SELECT id FROM hr_jobs WHERE college_id = $1 AND partner_company_id = $2 AND LOWER(title) = LOWER($3)',
+      [collegeId, companyId, j.title]
+    );
+    let jobId;
+    if (jobCheck.rows.length > 0) {
+      jobId = jobCheck.rows[0].id;
+    } else {
+      const newJ = await query(
+        `INSERT INTO hr_jobs (
+           college_id, creator_id, partner_company_id, company_name, title, description, skills,
+           location, experience_level, job_type, workplace_type, target_domain,
+           min_cgpa, min_interview_score, min_coding_solved, status
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'OPEN')
+         RETURNING id`,
+        [
+          collegeId, jobCreatorId, companyId, comp.company_name, j.title, j.description, j.skills,
+          j.location, j.experience_level, j.job_type, j.workplace_type, j.target_domain,
+          j.min_cgpa, j.min_interview_score, j.min_coding_solved
+        ]
+      );
+      jobId = newJ.rows[0].id;
+    }
+
+    // Seed test student applications
+    if (jobId && aaravRes.rows[0]?.id) {
+      await query(
+        `INSERT INTO hr_applications (job_id, candidate_id, status)
+         VALUES ($1, $2, 'REVIEWING')
+         ON CONFLICT DO NOTHING`,
+        [jobId, aaravRes.rows[0].id]
+      ).catch(() => {});
+    }
+    if (jobId && comp.company_name.includes('TCS') && diyaRes.rows[0]?.id) {
+      await query(
+        `INSERT INTO hr_applications (job_id, candidate_id, status)
+         VALUES ($1, $2, 'SHORTLISTED')
+         ON CONFLICT DO NOTHING`,
+        [jobId, diyaRes.rows[0].id]
+      ).catch(() => {});
+    }
+    if (jobId && comp.company_name.includes('Zomato') && ishitaRes.rows[0]?.id) {
+      await query(
+        `INSERT INTO hr_applications (job_id, candidate_id, status)
+         VALUES ($1, $2, 'OFFERED')
+         ON CONFLICT DO NOTHING`,
+        [jobId, ishitaRes.rows[0].id]
+      ).catch(() => {});
+    }
+
+    console.log(`✅ Partner Company & Placement Drive Ready: ${comp.company_name} -> ${j.title}`);
+  }
+
   console.log('\n======================================================');
-  console.log('🎉 ALL 10 STUDENTS & 2 FACULTY SUCCESSFULLY SEEDED! 🎉');
+  console.log('🎉 ALL 10 STUDENTS, 2 FACULTY & 4 PARTNER COMPANIES SEEDED! 🎉');
   console.log('======================================================\n');
   process.exit(0);
 }
