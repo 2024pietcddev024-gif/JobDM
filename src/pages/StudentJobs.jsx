@@ -24,6 +24,7 @@ export default function StudentJobs({ onNavigate }) {
   });
   
   const [applications, setApplications] = useState([]);
+  const [partnerCompanies, setPartnerCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
@@ -39,11 +40,14 @@ export default function StudentJobs({ onNavigate }) {
       setLoading(true);
       setError('');
 
-      const [matchRes, appsRes] = await Promise.all([
+      const [matchRes, appsRes, compRes] = await Promise.all([
         fetch(`${API_URL}/campus/jobs/eligible`, {
           headers: { Authorization: `Bearer ${token}` }
         }),
         fetch(`${API_URL}/campus/applications/my`, {
+          headers: { Authorization: `Bearer ${token}` }
+        }),
+        fetch(`${API_URL}/campus/partner-companies`, {
           headers: { Authorization: `Bearer ${token}` }
         })
       ]);
@@ -63,6 +67,11 @@ export default function StudentJobs({ onNavigate }) {
       if (appsRes.ok) {
         const appsData = await appsRes.json();
         setApplications(appsData || []);
+      }
+
+      if (compRes.ok) {
+        const compData = await compRes.json();
+        setPartnerCompanies(compData || []);
       }
     } catch (err) {
       console.error(err);
@@ -249,6 +258,16 @@ export default function StudentJobs({ onNavigate }) {
           >
             <UserCheck className="w-3.5 h-3.5" /> My Applications ({applications.length})
           </button>
+          <button
+            onClick={() => setActiveTab('companies')}
+            className={`px-3.5 py-2 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 ${
+              activeTab === 'companies'
+                ? 'bg-amber-600 text-white shadow-md shadow-amber-500/20'
+                : 'bg-white dark:bg-white/5 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-white/10 hover:bg-slate-50'
+            }`}
+          >
+            <Building2 className="w-3.5 h-3.5 text-amber-500" /> Approved Partners ({partnerCompanies.length})
+          </button>
         </div>
       </div>
 
@@ -277,6 +296,140 @@ export default function StudentJobs({ onNavigate }) {
       {loading ? (
         <div className="p-20 flex justify-center items-center">
           <Loader2 className="w-8 h-8 animate-spin text-amber-500" />
+        </div>
+      ) : activeTab === 'companies' ? (
+        /* APPROVED PARTNER COMPANIES DIRECTORY */
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div>
+              <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Building2 className="w-5 h-5 text-amber-500" />
+                College-Approved Corporate Partners &amp; Hiring Network
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                These companies are officially verified and approved by your college admin for campus placement drives.
+              </p>
+            </div>
+            <p className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20 flex items-center gap-1">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              {partnerCompanies.length} Approved Corporate Partners
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {partnerCompanies.map((c) => {
+              const drives = c.drives || [];
+              return (
+                <div
+                  key={c.id}
+                  className="p-5 rounded-2xl bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-white/10 hover:border-amber-500/40 shadow-sm transition-all flex flex-col justify-between space-y-4"
+                >
+                  <div>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-500/20 to-indigo-500/20 border border-amber-500/30 flex items-center justify-center font-extrabold text-amber-500 text-lg shadow-sm shrink-0">
+                          {c.company_name?.charAt(0) || 'C'}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-bold text-base text-slate-900 dark:text-white leading-tight">
+                              {c.company_name}
+                            </h3>
+                            {c.website && (
+                              <a
+                                href={c.website.startsWith('http') ? c.website : `https://${c.website}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-slate-400 hover:text-amber-500 transition-colors"
+                                title="Visit company website"
+                              >
+                                <ExternalLink className="w-3.5 h-3.5" />
+                              </a>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-500 font-medium">{c.industry || 'Technology & Engineering'}</p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col items-end gap-1 shrink-0">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-500" /> College Approved
+                        </span>
+                        <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
+                          c.tier === 'TIER_1' ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20' :
+                          c.tier === 'TIER_2' ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20' :
+                          'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20'
+                        }`}>
+                          {c.tier?.replace('_', ' ') || 'STARTUP'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {c.notes && (
+                      <p className="text-xs text-slate-500 italic mt-3 bg-slate-50 dark:bg-white/5 p-2 rounded-xl">
+                        "{c.notes}"
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Active Campus Drives List */}
+                  <div className="pt-3 border-t border-slate-200 dark:border-white/10 space-y-2">
+                    <div className="flex items-center justify-between text-xs font-semibold text-slate-500">
+                      <span>Campus Placement Drives ({drives.length})</span>
+                      <span className="text-amber-600 dark:text-amber-400 font-bold">
+                        {drives.length > 0 ? 'Accepting Applications' : 'Drive in Preparation'}
+                      </span>
+                    </div>
+
+                    {drives.length > 0 ? (
+                      <div className="space-y-2">
+                        {drives.map((drive) => (
+                          <div
+                            key={drive.id}
+                            className="p-3 rounded-xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                          >
+                            <div className="min-w-0">
+                              <p className="font-bold text-sm text-slate-800 dark:text-slate-200 truncate">{drive.title}</p>
+                              <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5">
+                                <span>{drive.target_domain?.replace('_', ' ') || drive.job_type || 'Campus Placement'}</span>
+                                <span>• {drive.location || 'Campus / Hybrid'}</span>
+                                {drive.skills && <span className="truncate max-w-[150px]">• {drive.skills}</span>}
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => {
+                                const found = [...matchData.recommended, ...matchData.eligible, ...matchData.potential, ...matchData.notEligible].find(j => j.jobId === drive.id);
+                                if (found) {
+                                  setApplyingJob(found);
+                                } else {
+                                  setApplyingJob({ jobId: drive.id, id: drive.id, title: drive.title, companyName: c.company_name });
+                                }
+                              }}
+                              className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white shadow-sm shrink-0 flex items-center justify-center gap-1 transition-colors"
+                            >
+                              <span>Apply Now</span>
+                              <ChevronRight className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="p-3 text-center text-xs text-slate-400 bg-slate-50 dark:bg-white/[0.02] rounded-xl">
+                        Official hiring partner verified. New campus drive schedule will be published shortly.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+
+            {partnerCompanies.length === 0 && (
+              <div className="p-12 text-center text-slate-500 col-span-2">
+                <Building2 className="w-12 h-12 mx-auto text-slate-400 mb-3 opacity-40" />
+                <p className="font-semibold">No approved partner companies found for your college yet.</p>
+              </div>
+            )}
+          </div>
         </div>
       ) : activeTab === 'applications' ? (
         /* MY APPLICATIONS */
@@ -391,9 +544,18 @@ export default function StudentJobs({ onNavigate }) {
                             </span>
                           )}
                         </div>
-                        <p className="text-xs font-semibold text-slate-500 flex items-center gap-1.5 mt-0.5">
-                          <Building2 className="w-3.5 h-3.5 text-amber-600" /> {job.collegeName || 'Campus Placement'}
-                        </p>
+                        <div className="flex items-center gap-2 flex-wrap mt-1">
+                          <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                            <Building2 className="w-3.5 h-3.5 text-amber-600" /> 
+                            {job.companyName || job.company_name || 'Campus Partner'}
+                          </span>
+                          <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 flex items-center gap-0.5">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-500" /> College Approved
+                          </span>
+                          <span className="text-[11px] text-slate-400 font-medium">
+                            • {job.collegeName}
+                          </span>
+                        </div>
                       </div>
 
                       {/* Suitability Score Pill */}

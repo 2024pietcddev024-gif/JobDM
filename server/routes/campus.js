@@ -231,16 +231,24 @@ router.get('/jobs/eligible', async (req, res) => {
     // 1. Fetch Candidate Matching Context
     const candidateContext = await getCandidateMatchingContext(candidateId, collegeId);
 
-    // 2. Fetch Open Jobs
+    // 2. Fetch Open Jobs (only for college-approved companies)
     let query = `
       SELECT 
         j.*,
+        COALESCE(cpc.company_name, j.company_name, 'Campus Placement Partner') as company_name,
+        cpc.industry as company_industry,
+        cpc.website as company_website,
+        cpc.tier as company_tier,
+        cpc.mou_signed as company_mou_signed,
+        COALESCE(cpc.is_approved, TRUE) as company_is_approved,
         c.name as college_name,
         c.code as college_code,
         (SELECT COUNT(*) FROM hr_applications WHERE job_id = j.id) as total_applicants
       FROM hr_jobs j
       JOIN colleges c ON j.college_id = c.id
+      LEFT JOIN college_partner_companies cpc ON (j.partner_company_id = cpc.id OR (j.college_id = cpc.college_id AND LOWER(j.company_name) = LOWER(cpc.company_name)))
       WHERE j.status = 'OPEN'
+        AND (cpc.id IS NULL OR cpc.is_approved = TRUE)
     `;
     const params = [];
     if (collegeId) {
@@ -309,6 +317,12 @@ router.get('/jobs', async (req, res) => {
     let query = `
       SELECT 
         j.*,
+        COALESCE(cpc.company_name, j.company_name, 'Campus Placement Partner') as company_name,
+        cpc.industry as company_industry,
+        cpc.website as company_website,
+        cpc.tier as company_tier,
+        cpc.mou_signed as company_mou_signed,
+        COALESCE(cpc.is_approved, TRUE) as company_is_approved,
         c.name as college_name,
         c.code as college_code,
         ha.id as user_application_id,
@@ -317,8 +331,10 @@ router.get('/jobs', async (req, res) => {
         (SELECT COUNT(*) FROM hr_applications WHERE job_id = j.id) as total_applicants
       FROM hr_jobs j
       JOIN colleges c ON j.college_id = c.id
+      LEFT JOIN college_partner_companies cpc ON (j.partner_company_id = cpc.id OR (j.college_id = cpc.college_id AND LOWER(j.company_name) = LOWER(cpc.company_name)))
       LEFT JOIN hr_applications ha ON ha.job_id = j.id AND ha.candidate_id = $1
       WHERE j.status = 'OPEN'
+        AND (cpc.id IS NULL OR cpc.is_approved = TRUE)
     `;
     const params = [candidateId];
 
@@ -334,6 +350,53 @@ router.get('/jobs', async (req, res) => {
   } catch (error) {
     console.error('[GET /campus/jobs] error:', error);
     res.status(500).json({ error: 'Failed to load jobs' });
+  }
+});
+
+// GET /api/campus/partner-companies - Get college-approved partner companies for students
+router.get('/partner-companies', async (req, res) => {
+  try {
+    const collegeId = req.campusContext?.college_id;
+    if (!collegeId) {
+      return res.json([]);
+    }
+
+    const result = await pool.query(`
+      SELECT 
+        cpc.id,
+        cpc.company_name,
+        cpc.industry,
+        cpc.tier,
+        cpc.website,
+        cpc.notes,
+        cpc.mou_signed,
+        cpc.is_approved,
+        cpc.created_at,
+        COUNT(DISTINCT j.id) as active_drives_count
+      FROM college_partner_companies cpc
+      LEFT JOIN hr_jobs j ON (j.partner_company_id = cpc.id OR (j.college_id = cpc.college_id AND LOWER(j.company_name) = LOWER(cpc.company_name))) AND j.status = 'OPEN'
+      WHERE cpc.college_id = $1 AND cpc.is_approved = TRUE
+      GROUP BY cpc.id
+      ORDER BY cpc.created_at DESC
+    `, [collegeId]);
+
+    const companies = result.rows;
+    for (const comp of companies) {
+      const jobsRes = await pool.query(`
+        SELECT id, title, location, job_type, workplace_type, target_domain, skills, created_at,
+               (SELECT COUNT(*) FROM hr_applications WHERE job_id = hr_jobs.id) as applicants_count
+        FROM hr_jobs
+        WHERE (partner_company_id = $1 OR (college_id = $2 AND LOWER(company_name) = LOWER($3)))
+          AND status = 'OPEN'
+        ORDER BY created_at DESC
+      `, [comp.id, collegeId, comp.company_name]);
+      comp.drives = jobsRes.rows;
+    }
+
+    res.json(companies);
+  } catch (error) {
+    console.error('[GET /campus/partner-companies] error:', error);
+    res.status(500).json({ error: 'Failed to fetch approved partner companies' });
   }
 });
 

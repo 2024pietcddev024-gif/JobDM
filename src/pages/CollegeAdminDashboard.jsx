@@ -95,6 +95,18 @@ export default function CollegeAdminDashboard({ initialTab = 'overview', onNavig
   const [showTutorModal, setShowTutorModal] = useState(false);
   const [showManageBatchTutors, setShowManageBatchTutors] = useState(false);
   const [showManageBatchStudents, setShowManageBatchStudents] = useState(false);
+  const [showAddDriveModal, setShowAddDriveModal] = useState(false);
+  const [driveTargetCompany, setDriveTargetCompany] = useState(null);
+  const [driveFormData, setDriveFormData] = useState({
+    title: '',
+    target_domain: 'SOFTWARE_DEVELOPMENT',
+    job_type: 'Full Time',
+    workplace_type: 'Hybrid',
+    location: 'Campus / Hybrid',
+    min_cgpa: '6.5',
+    skills: '',
+    description: ''
+  });
 
   // Bulk Provisioning State
   const [provisionPastedText, setProvisionPastedText] = useState('');
@@ -264,6 +276,61 @@ export default function CollegeAdminDashboard({ initialTab = 'overview', onNavig
       if (ov) setOverviewAnalytics(ov);
     } catch (err) {
       setError(err.message || 'Failed to delete partner company.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleToggleApproval = async (companyId, currentlyApproved) => {
+    try {
+      setLoading(true); setError('');
+      await fetchApi(`/companies/${companyId}/approval`, 'PATCH', {
+        is_approved: !currentlyApproved
+      });
+      const [comps, ov] = await Promise.all([
+        fetchApi('/companies').catch(() => []),
+        fetchApi('/analytics/overview').catch(() => null)
+      ]);
+      setPartnerCompanies(comps || []);
+      if (ov) setOverviewAnalytics(ov);
+    } catch (err) {
+      setError(err.message || 'Failed to update approval status');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOpenAddDrive = (company) => {
+    setDriveTargetCompany(company);
+    setDriveFormData({
+      title: `${company.company_name} - Graduate Campus Drive`,
+      target_domain: 'SOFTWARE_DEVELOPMENT',
+      job_type: 'Full Time',
+      workplace_type: 'Hybrid',
+      location: 'Campus / Hybrid',
+      min_cgpa: '6.5',
+      skills: 'Python, Problem Solving, Data Structures, Communication',
+      description: `Campus recruitment drive for eligible engineering graduates at ${company.company_name}.`
+    });
+    setShowAddDriveModal(true);
+  };
+
+  const handleSaveDrive = async (e) => {
+    e.preventDefault();
+    if (!driveTargetCompany) return;
+    try {
+      setLoading(true); setError('');
+      await fetchApi(`/companies/${driveTargetCompany.id}/drives`, 'POST', driveFormData);
+      setShowAddDriveModal(false);
+      setDriveTargetCompany(null);
+      const [comps, ov] = await Promise.all([
+        fetchApi('/companies').catch(() => []),
+        fetchApi('/analytics/overview').catch(() => null)
+      ]);
+      setPartnerCompanies(comps || []);
+      if (ov) setOverviewAnalytics(ov);
+    } catch (err) {
+      setError(err.message || 'Failed to publish campus drive');
     } finally {
       setLoading(false);
     }
@@ -970,18 +1037,31 @@ export default function CollegeAdminDashboard({ initialTab = 'overview', onNavig
                       </div>
 
                       <div className="flex flex-col items-end gap-1.5 shrink-0">
-                        <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
-                          c.tier === 'TIER_1' ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20' :
-                          c.tier === 'TIER_2' ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20' :
-                          'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
-                        }`}>
-                          {c.tier?.replace('_', ' ') || 'TIER 1'}
-                        </span>
-                        {c.mou_signed && (
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
-                            <CheckCircle2 className="w-3 h-3" /> MOU Signed
+                        {/* Approval Status Badge */}
+                        {c.is_approved !== false ? (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 flex items-center gap-1 shadow-sm">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-500" /> Approved for Students
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 flex items-center gap-1">
+                            <AlertTriangle className="w-3 h-3 text-amber-500" /> Hidden (Pending)
                           </span>
                         )}
+
+                        <div className="flex items-center gap-1.5">
+                          <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
+                            c.tier === 'TIER_1' ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20' :
+                            c.tier === 'TIER_2' ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20' :
+                            'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
+                          }`}>
+                            {c.tier?.replace('_', ' ') || 'TIER 1'}
+                          </span>
+                          {c.mou_signed && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
+                              MOU
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
 
@@ -1013,57 +1093,100 @@ export default function CollegeAdminDashboard({ initialTab = 'overview', onNavig
                   </div>
 
                   {/* Active Campus Drives List */}
-                  <div className="pt-3 border-t border-slate-200 dark:border-white/10 space-y-2">
-                    <div className="flex items-center justify-between text-xs font-semibold text-slate-500">
-                      <span>Active Campus Drives ({c.active_drives?.length || 0})</span>
-                      <span className="text-amber-600 dark:text-amber-400 font-bold">
-                        {c.applicants_count || 0} Student Applicants
-                      </span>
-                    </div>
+                  {(() => {
+                    const drivesList = c.active_drives || c.drives || [];
+                    return (
+                      <div className="pt-3 border-t border-slate-200 dark:border-white/10 space-y-2">
+                        <div className="flex items-center justify-between text-xs font-semibold text-slate-500">
+                          <span>Active Campus Drives ({drivesList.length})</span>
+                          <span className="text-amber-600 dark:text-amber-400 font-bold">
+                            {c.applicants_count || 0} Student Applicants
+                          </span>
+                        </div>
 
-                    {c.active_drives && c.active_drives.length > 0 ? (
-                      <div className="space-y-1.5">
-                        {c.active_drives.map((drive) => (
-                          <div
-                            key={drive.id}
-                            className="p-2.5 rounded-lg bg-indigo-50/50 dark:bg-white/[0.03] border border-indigo-100 dark:border-white/5 flex items-center justify-between gap-2 text-xs"
-                          >
-                            <div className="min-w-0">
-                              <p className="font-semibold text-slate-800 dark:text-slate-200 truncate">{drive.title}</p>
-                              <div className="flex items-center gap-2 text-[11px] text-slate-500">
-                                <span>{drive.role || 'Software Engineering'}</span>
-                                {drive.ctc && <span>• {drive.ctc}</span>}
+                        {drivesList.length > 0 ? (
+                          <div className="space-y-1.5">
+                            {drivesList.map((drive) => (
+                              <div
+                                key={drive.id}
+                                className="p-2.5 rounded-lg bg-indigo-50/50 dark:bg-white/[0.03] border border-indigo-100 dark:border-white/5 flex items-center justify-between gap-2 text-xs"
+                              >
+                                <div className="min-w-0">
+                                  <p className="font-semibold text-slate-800 dark:text-slate-200 truncate">{drive.title}</p>
+                                  <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                                    <span>{drive.target_domain?.replace('_', ' ') || drive.job_type || 'Campus Placement'}</span>
+                                    <span>• {drive.location || 'Campus / Hybrid'}</span>
+                                  </div>
+                                </div>
+                                <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                                  {drive.total_applicants || drive.applicants_count || 0} Applied
+                                </span>
                               </div>
-                            </div>
-                            <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                              {drive.applicants || 0} Applied
-                            </span>
+                            ))}
                           </div>
-                        ))}
+                        ) : (
+                          <div className="p-2.5 text-center text-xs text-slate-400 bg-slate-50 dark:bg-white/[0.02] rounded-lg flex items-center justify-between">
+                            <span>No campus drives posted yet.</span>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenAddDrive(c)}
+                              className="text-[11px] font-bold text-amber-500 hover:underline flex items-center gap-1"
+                            >
+                              <Plus className="w-3 h-3" /> Post Drive
+                            </button>
+                          </div>
+                        )}
                       </div>
-                    ) : (
-                      <div className="p-2 text-center text-xs text-slate-400 bg-slate-50 dark:bg-white/[0.02] rounded-lg">
-                        No active campus drives posted yet.
-                      </div>
-                    )}
-                  </div>
+                    );
+                  })()}
 
                   {/* Actions Footer */}
-                  <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-white/5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200 dark:border-white/5">
+                    {/* Toggle Approval for Students */}
                     <button
-                      onClick={() => handleOpenEditCompany(c)}
-                      className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/5 hover:bg-white/10 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-white/10 flex items-center gap-1.5 transition-colors"
+                      type="button"
+                      onClick={() => handleToggleApproval(c.id, c.is_approved !== false)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors ${
+                        c.is_approved !== false
+                          ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 border border-amber-500/30'
+                          : 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-sm'
+                      }`}
+                      title={c.is_approved !== false ? "Hide company from student portal" : "Approve and show to students"}
                     >
-                      <Edit2 className="w-3.5 h-3.5 text-indigo-400" />
-                      Edit
+                      {c.is_approved !== false ? (
+                        <><span>Revoke Approval</span></>
+                      ) : (
+                        <><CheckCircle className="w-3.5 h-3.5" /><span>Approve for Students</span></>
+                      )}
                     </button>
-                    <button
-                      onClick={() => handleDeleteCompany(c.id, c.company_name)}
-                      className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/20 flex items-center gap-1.5 transition-colors"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      Remove
-                    </button>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenAddDrive(c)}
+                        className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center gap-1 shadow-sm transition-colors"
+                        title="Add a new campus recruitment drive for this company"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Post Drive</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEditCompany(c)}
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/5 hover:bg-white/10 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-white/10 flex items-center gap-1.5 transition-colors"
+                      >
+                        <Edit2 className="w-3.5 h-3.5 text-indigo-400" />
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteCompany(c.id, c.company_name)}
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/20 flex items-center gap-1.5 transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Remove
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -1213,6 +1336,153 @@ export default function CollegeAdminDashboard({ initialTab = 'overview', onNavig
                     >
                       {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
                       <span>{editingCompany ? 'Update Partner Company' : 'Save Partner Company'}</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* Add Campus Placement Drive Modal */}
+          {showAddDriveModal && driveTargetCompany && (
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="glass-card w-full max-w-lg rounded-2xl p-6 border border-white/10 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+                <div className="flex items-center justify-between pb-3 border-b border-white/10">
+                  <div>
+                    <h3 className="text-base font-bold text-white flex items-center gap-2">
+                      <Briefcase className="w-5 h-5 text-amber-500" />
+                      Post Campus Placement Drive
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Publishing drive for: <strong className="text-amber-400">{driveTargetCompany.company_name}</strong>
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => { setShowAddDriveModal(false); setDriveTargetCompany(null); }}
+                    className="text-slate-400 hover:text-white"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <form onSubmit={handleSaveDrive} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                      Job / Drive Title *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={driveFormData.title}
+                      onChange={(e) => setDriveFormData({ ...driveFormData, title: e.target.value })}
+                      placeholder="e.g. Associate Software Engineer, Data Analyst, Cloud Trainee"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white outline-none focus:border-amber-500"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                        Domain
+                      </label>
+                      <select
+                        value={driveFormData.target_domain}
+                        onChange={(e) => setDriveFormData({ ...driveFormData, target_domain: e.target.value })}
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white outline-none focus:border-amber-500"
+                      >
+                        <option value="SOFTWARE_DEVELOPMENT">Software Development</option>
+                        <option value="DATA_SCIENCE">Data Science / Analytics</option>
+                        <option value="CLOUD_DEVOPS">Cloud & DevOps</option>
+                        <option value="CYBERSECURITY">Cybersecurity</option>
+                        <option value="CORE_ENGINEERING">Core Engineering</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                        Min CGPA Required
+                      </label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        max="10"
+                        value={driveFormData.min_cgpa}
+                        onChange={(e) => setDriveFormData({ ...driveFormData, min_cgpa: e.target.value })}
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white outline-none focus:border-amber-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                        Workplace Type
+                      </label>
+                      <select
+                        value={driveFormData.workplace_type}
+                        onChange={(e) => setDriveFormData({ ...driveFormData, workplace_type: e.target.value })}
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white outline-none focus:border-amber-500"
+                      >
+                        <option value="Hybrid">Hybrid</option>
+                        <option value="Onsite">Onsite (Campus / Office)</option>
+                        <option value="Remote">Remote</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                        Location
+                      </label>
+                      <input
+                        type="text"
+                        value={driveFormData.location}
+                        onChange={(e) => setDriveFormData({ ...driveFormData, location: e.target.value })}
+                        placeholder="e.g. Jaipur / Bangalore / Pan India"
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white outline-none focus:border-amber-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                      Required Skills (comma separated)
+                    </label>
+                    <input
+                      type="text"
+                      value={driveFormData.skills}
+                      onChange={(e) => setDriveFormData({ ...driveFormData, skills: e.target.value })}
+                      placeholder="e.g. Python, SQL, DSA, Problem Solving"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white outline-none focus:border-amber-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                      Drive Description & Eligibility Notes
+                    </label>
+                    <textarea
+                      rows="2"
+                      value={driveFormData.description}
+                      onChange={(e) => setDriveFormData({ ...driveFormData, description: e.target.value })}
+                      placeholder="e.g. Campus placement drive for 2026 graduating batch."
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white outline-none focus:border-amber-500 resize-none"
+                    />
+                  </div>
+
+                  <div className="flex justify-end gap-3 pt-3 border-t border-white/10">
+                    <button
+                      type="button"
+                      onClick={() => { setShowAddDriveModal(false); setDriveTargetCompany(null); }}
+                      className="px-4 py-2 rounded-xl text-xs font-semibold bg-white/5 hover:bg-white/10 text-slate-300"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="px-5 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center gap-1.5 shadow-lg shadow-amber-500/20 disabled:opacity-50"
+                    >
+                      {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                      <span>Publish Campus Drive</span>
                     </button>
                   </div>
                 </form>

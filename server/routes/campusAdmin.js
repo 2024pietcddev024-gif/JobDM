@@ -641,13 +641,16 @@ router.get('/companies', async (req, res) => {
     const companies = result.rows;
     for (const comp of companies) {
       const jobsRes = await pool.query(`
-        SELECT id, title, location, job_type, workplace_type, target_domain, status, created_at,
+        SELECT id, title, location, job_type, workplace_type, target_domain, skills, status, created_at,
                (SELECT COUNT(*) FROM hr_applications WHERE job_id = hr_jobs.id) as total_applicants
         FROM hr_jobs
-        WHERE partner_company_id = $1 OR (college_id = $2 AND LOWER(company_name) = LOWER($3))
+        WHERE (partner_company_id = $1 OR (college_id = $2 AND LOWER(company_name) = LOWER($3)))
+          AND status = 'OPEN'
         ORDER BY created_at DESC
       `, [comp.id, collegeId, comp.company_name]);
       comp.drives = jobsRes.rows;
+      comp.active_drives = jobsRes.rows;
+      comp.drives_count = jobsRes.rows.length;
     }
 
     res.json(companies);
@@ -661,7 +664,8 @@ router.post('/companies', async (req, res) => {
   const collegeId = req.campusContext.college_id;
   const { 
     company_name, industry, recruiter_name, recruiter_email, 
-    partnership_status = 'ACTIVE', tier = 'TIER_1', website, notes, mou_signed = true 
+    partnership_status = 'ACTIVE', tier = 'TIER_1', website, notes, mou_signed = true,
+    is_approved = true
   } = req.body || {};
 
   if (!company_name || !company_name.trim()) {
@@ -672,19 +676,101 @@ router.post('/companies', async (req, res) => {
     const newComp = await pool.query(`
       INSERT INTO college_partner_companies (
         college_id, company_name, industry, recruiter_name, recruiter_email,
-        partnership_status, tier, website, notes, mou_signed, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+        partnership_status, tier, website, notes, mou_signed, is_approved, approval_status, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'APPROVED', NOW(), NOW())
       RETURNING *
     `, [
       collegeId, company_name.trim(), industry || 'Information Technology',
       recruiter_name || null, recruiter_email || null,
-      partnership_status, tier, website || null, notes || null, Boolean(mou_signed)
+      partnership_status, tier, website || null, notes || null, Boolean(mou_signed), Boolean(is_approved)
     ]);
 
     res.status(201).json(newComp.rows[0]);
   } catch (error) {
     console.error('[POST /companies] error:', error);
     res.status(500).json({ error: 'Failed to add partner company' });
+  }
+});
+
+// Toggle / update approval status of partner company
+router.patch('/companies/:id/approval', async (req, res) => {
+  const collegeId = req.campusContext.college_id;
+  const { id } = req.params;
+  const { is_approved } = req.body || {};
+
+  try {
+    const approvedVal = Boolean(is_approved);
+    const statusVal = approvedVal ? 'APPROVED' : 'PENDING';
+    const updated = await pool.query(`
+      UPDATE college_partner_companies
+      SET is_approved = $1,
+          approval_status = $2,
+          approved_at = CASE WHEN $1 = TRUE THEN NOW() ELSE NULL END,
+          updated_at = NOW()
+      WHERE id = $3 AND college_id = $4
+      RETURNING *
+    `, [approvedVal, statusVal, id, collegeId]);
+
+    if (updated.rows.length === 0) {
+      return res.status(404).json({ error: 'Partner company not found' });
+    }
+
+    res.json({
+      message: approvedVal 
+        ? 'Company approved! Visible to all students in their Campus Jobs & Partners portal.' 
+        : 'Company approval revoked. Hidden from student portal.',
+      company: updated.rows[0]
+    });
+  } catch (error) {
+    console.error('[PATCH /companies/:id/approval] error:', error);
+    res.status(500).json({ error: 'Failed to update company approval status' });
+  }
+});
+
+// Post a campus placement drive for a partner company
+router.post('/companies/:id/drives', async (req, res) => {
+  const collegeId = req.campusContext.college_id;
+  const creatorId = req.user.id;
+  const { id } = req.params;
+  const { 
+    title, description, skills, location, 
+    job_type = 'Full Time', workplace_type = 'Hybrid', 
+    target_domain = 'SOFTWARE_DEVELOPMENT', min_cgpa = 6.0 
+  } = req.body || {};
+
+  if (!title || !title.trim()) {
+    return res.status(400).json({ error: 'Drive title is required' });
+  }
+
+  try {
+    const compRes = await pool.query('SELECT company_name FROM college_partner_companies WHERE id = $1 AND college_id = $2', [id, collegeId]);
+    if (compRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Partner company not found' });
+    }
+
+    const companyName = compRes.rows[0].company_name;
+
+    const result = await pool.query(`
+      INSERT INTO hr_jobs (
+        college_id, creator_id, partner_company_id, company_name, title, description, skills,
+        location, job_type, workplace_type, target_domain, min_cgpa, status
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'OPEN')
+      RETURNING *
+    `, [
+      collegeId, creatorId, id, companyName, 
+      title.trim(), description || `Campus placement drive for ${companyName}`,
+      skills || 'Communication, Problem Solving',
+      location || 'Campus / Hybrid',
+      job_type, workplace_type, target_domain, Number(min_cgpa) || 6.0
+    ]);
+
+    res.status(201).json({
+      message: `Campus placement drive for ${companyName} published successfully!`,
+      drive: result.rows[0]
+    });
+  } catch (error) {
+    console.error('[POST /companies/:id/drives] error:', error);
+    res.status(500).json({ error: 'Failed to create campus placement drive' });
   }
 });
 
