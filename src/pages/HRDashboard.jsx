@@ -7,7 +7,9 @@ import {
   FileText, Building2, BarChart3, Settings, Edit2,
   Trash2, ExternalLink, Clock, ChevronRight, X,
   Award, Sparkles, AlertCircle, ArrowUpRight, Check,
-  Filter, Phone, Mail, MapPin, Copy
+  Filter, Phone, Mail, MapPin, Copy, Kanban,
+  LayoutGrid, List, CheckCircle2, RotateCcw, ArrowRight,
+  Code, MoreHorizontal, ChevronDown
 } from 'lucide-react';
 import { 
   ResponsiveContainer, LineChart, Line, AreaChart, Area,
@@ -79,6 +81,8 @@ export default function HRDashboard({ initialTab = 'overview', onNavigate }) {
   const [candidateSearch, setCandidateSearch] = useState('');
   const [candidateStatusFilter, setCandidateStatusFilter] = useState('All');
   const [candidateJobFilter, setCandidateJobFilter] = useState('');
+  const [pipelineViewMode, setPipelineViewMode] = useState('board'); // 'board' | 'table'
+  const [draggingCandidateId, setDraggingCandidateId] = useState(null);
   
   const [jobSearch, setJobSearch] = useState('');
   const [jobStatusFilter, setJobStatusFilter] = useState('All');
@@ -141,9 +145,16 @@ export default function HRDashboard({ initialTab = 'overview', onNavigate }) {
       if (tab === 'overview') {
         const data = await fetchApi('/overview');
         setOverviewData(data);
+        // Preload jobs and candidates for instant schedule modal and pipeline readiness
+        fetchApi('/jobs').then(j => { if (j) setJobs(j); }).catch(() => {});
+        fetchApi('/candidates').then(c => { if (c) setCandidates(c || []); }).catch(() => {});
       } else if (tab === 'candidates') {
-        const data = await fetchApi('/candidates');
-        setCandidates(data || []);
+        const [candData, jobsData] = await Promise.all([
+          fetchApi('/candidates'),
+          jobs.length === 0 ? fetchApi('/jobs').catch(() => []) : Promise.resolve(null)
+        ]);
+        setCandidates(candData || []);
+        if (jobsData && jobsData.length > 0) setJobs(jobsData);
       } else if (tab === 'jobs') {
         const data = await fetchApi('/jobs');
         setJobs(data || []);
@@ -266,18 +277,58 @@ export default function HRDashboard({ initialTab = 'overview', onNavigate }) {
     }
   };
 
-  const handleUpdateCandidateStatus = async (applicationId, newStatus) => {
+  const handleStageMove = async (applicationId, targetStatus) => {
+    if (!applicationId || !targetStatus) return;
+    // Immediate optimistic update for seamless pipeline UX
+    setCandidates(prev => prev.map(c => c.application_id === applicationId ? { ...c, status: targetStatus } : c));
+    if (selectedCandidate && selectedCandidate.application_id === applicationId) {
+      setSelectedCandidate(prev => prev ? ({ ...prev, status: targetStatus }) : null);
+    }
     try {
-      await fetchApi(`/applications/${applicationId}/status`, 'PATCH', { status: newStatus });
-      setSuccess(`Application status transitioned to ${newStatus}`);
-      if (selectedCandidate) {
-        setSelectedCandidate(prev => ({ ...prev, status: newStatus }));
-      }
-      loadTabData(activeTab);
+      await fetchApi(`/applications/${applicationId}/status`, 'PATCH', { status: targetStatus });
+      setSuccess(`Candidate status updated to ${targetStatus}`);
       setTimeout(() => setSuccess(''), 3000);
+      fetchApi('/overview').then(ov => { if (ov) setOverviewData(ov); }).catch(() => {});
     } catch (err) {
       setError(err.message);
+      const refreshed = await fetchApi('/candidates').catch(() => null);
+      if (refreshed) setCandidates(refreshed);
     }
+  };
+
+  const handleUpdateCandidateStatus = async (applicationId, newStatus) => {
+    await handleStageMove(applicationId, newStatus);
+  };
+
+  // Drag and Drop handlers for Pipeline Board
+  const handleDragStart = (e, candidate) => {
+    e.dataTransfer.setData('text/plain', candidate.application_id);
+    setDraggingCandidateId(candidate.application_id);
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+  };
+
+  const handleDropOnStage = async (e, targetStageId) => {
+    e.preventDefault();
+    const applicationId = e.dataTransfer.getData('text/plain') || draggingCandidateId;
+    setDraggingCandidateId(null);
+    if (!applicationId) return;
+
+    const cand = candidates.find(c => c.application_id === applicationId);
+    if (!cand) return;
+
+    if (targetStageId === 'INTERVIEW_SCHEDULED') {
+      handleOpenScheduleModal(cand);
+      return;
+    }
+
+    let targetStatus = targetStageId;
+    if (targetStageId === 'APPLIED') targetStatus = 'REVIEWING';
+    if (cand.status === targetStatus) return;
+
+    await handleStageMove(applicationId, targetStatus);
   };
 
   // Schedule Interview Handlers
@@ -336,22 +387,121 @@ export default function HRDashboard({ initialTab = 'overview', onNavigate }) {
     }
   };
 
+  // Pipeline Stages Definition
+  const PIPELINE_STAGES = [
+    {
+      id: 'APPLIED',
+      label: 'New & In Review',
+      sublabel: 'Fresh applications',
+      icon: Clock,
+      color: 'blue',
+      headerBg: 'border-t-4 border-t-blue-500 bg-blue-50/50 dark:bg-blue-950/20 text-blue-900 dark:text-blue-300',
+      badgeBg: 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300',
+      matchStatuses: ['APPLIED', 'REVIEWING', 'NEW'],
+      targetStatus: 'REVIEWING'
+    },
+    {
+      id: 'SHORTLISTED',
+      label: 'Shortlisted',
+      sublabel: 'Vetted for interview',
+      icon: Award,
+      color: 'amber',
+      headerBg: 'border-t-4 border-t-amber-500 bg-amber-50/50 dark:bg-amber-950/20 text-amber-900 dark:text-amber-300',
+      badgeBg: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300',
+      matchStatuses: ['SHORTLISTED'],
+      targetStatus: 'SHORTLISTED'
+    },
+    {
+      id: 'INTERVIEW_SCHEDULED',
+      label: 'Interview Scheduled',
+      sublabel: 'Rounds on calendar',
+      icon: Calendar,
+      color: 'purple',
+      headerBg: 'border-t-4 border-t-purple-500 bg-purple-50/50 dark:bg-purple-950/20 text-purple-900 dark:text-purple-300',
+      badgeBg: 'bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300',
+      matchStatuses: ['INTERVIEW_SCHEDULED', 'SCHEDULED', 'INTERVIEW'],
+      targetStatus: 'INTERVIEW_SCHEDULED'
+    },
+    {
+      id: 'SELECTED',
+      label: 'Offered / Hired',
+      sublabel: 'Selected & offers extended',
+      icon: CheckCircle2,
+      color: 'emerald',
+      headerBg: 'border-t-4 border-t-emerald-500 bg-emerald-50/50 dark:bg-emerald-950/20 text-emerald-900 dark:text-emerald-300',
+      badgeBg: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300',
+      matchStatuses: ['SELECTED', 'OFFERED', 'HIRED'],
+      targetStatus: 'SELECTED'
+    },
+    {
+      id: 'REJECTED',
+      label: 'Archived / Rejected',
+      sublabel: 'Not progressing',
+      icon: XCircle,
+      color: 'rose',
+      headerBg: 'border-t-4 border-t-rose-500 bg-rose-50/50 dark:bg-rose-950/20 text-rose-900 dark:text-rose-300',
+      badgeBg: 'bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300',
+      matchStatuses: ['REJECTED', 'CANCELLED'],
+      targetStatus: 'REJECTED'
+    }
+  ];
+
   // Filtering
   const filteredCandidates = useMemo(() => {
     return candidates.filter(c => {
+      const q = candidateSearch.toLowerCase();
       const matchSearch = !candidateSearch || 
-        c.name?.toLowerCase().includes(candidateSearch.toLowerCase()) ||
-        c.email?.toLowerCase().includes(candidateSearch.toLowerCase()) ||
-        c.applied_for?.toLowerCase().includes(candidateSearch.toLowerCase());
+        c.name?.toLowerCase().includes(q) ||
+        c.email?.toLowerCase().includes(q) ||
+        c.applied_for?.toLowerCase().includes(q) ||
+        (Array.isArray(c.skills) && c.skills.some(s => s.toLowerCase().includes(q)));
       
-      const matchStatus = candidateStatusFilter === 'All' || 
-        c.status?.toUpperCase() === candidateStatusFilter.toUpperCase();
+      let matchStatus = true;
+      if (candidateStatusFilter !== 'All') {
+        const st = (c.status || 'APPLIED').toUpperCase();
+        if (candidateStatusFilter === 'APPLIED') {
+          matchStatus = ['APPLIED', 'REVIEWING', 'NEW'].includes(st);
+        } else if (candidateStatusFilter === 'SHORTLISTED') {
+          matchStatus = st === 'SHORTLISTED';
+        } else if (candidateStatusFilter === 'INTERVIEW_SCHEDULED') {
+          matchStatus = ['INTERVIEW_SCHEDULED', 'SCHEDULED', 'INTERVIEW'].includes(st);
+        } else if (candidateStatusFilter === 'SELECTED') {
+          matchStatus = ['SELECTED', 'OFFERED', 'HIRED'].includes(st);
+        } else if (candidateStatusFilter === 'REJECTED') {
+          matchStatus = ['REJECTED', 'CANCELLED'].includes(st);
+        } else {
+          matchStatus = st === candidateStatusFilter.toUpperCase();
+        }
+      }
 
       const matchJob = !candidateJobFilter || c.job_id === candidateJobFilter;
 
       return matchSearch && matchStatus && matchJob;
     });
   }, [candidates, candidateSearch, candidateStatusFilter, candidateJobFilter]);
+
+  // Group candidates by pipeline stage for the Kanban Board view
+  const pipelineCandidatesByStage = useMemo(() => {
+    const stageMap = {
+      APPLIED: [],
+      SHORTLISTED: [],
+      INTERVIEW_SCHEDULED: [],
+      SELECTED: [],
+      REJECTED: []
+    };
+
+    filteredCandidates.forEach(cand => {
+      const st = (cand.status || 'APPLIED').toUpperCase();
+      const matched = PIPELINE_STAGES.find(s => s.matchStatuses.includes(st));
+      if (matched) {
+        stageMap[matched.id].push(cand);
+      } else {
+        stageMap.APPLIED.push(cand);
+      }
+    });
+
+    return stageMap;
+  }, [filteredCandidates]);
 
   const filteredJobs = useMemo(() => {
     return jobs.filter(j => {
@@ -379,11 +529,17 @@ export default function HRDashboard({ initialTab = 'overview', onNavigate }) {
       case 'APPLIED':
       case 'NEW':
         return 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border-blue-200 dark:border-blue-800';
+      case 'REVIEWING':
+      case 'IN_REVIEW':
+        return 'bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800';
       case 'SHORTLISTED':
         return 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 border-amber-200 dark:border-amber-800';
       case 'INTERVIEW_SCHEDULED':
       case 'SCHEDULED':
+      case 'INTERVIEW':
         return 'bg-purple-50 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 border-purple-200 dark:border-purple-800';
+      case 'OFFERED':
+        return 'bg-teal-50 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300 border-teal-200 dark:border-teal-800';
       case 'SELECTED':
       case 'HIRED':
       case 'COMPLETED':
@@ -859,142 +1015,444 @@ export default function HRDashboard({ initialTab = 'overview', onNavigate }) {
           )}
 
           {/* ========================================================= */}
-          {/* 3. CANDIDATES PIPELINE TAB (Prototype Reference Step 4) */}
+          {/* 3. CANDIDATES PIPELINE TAB (Systematic ATS Pipeline)      */}
           {/* ========================================================= */}
           {activeTab === 'candidates' && (
             <div className="space-y-6">
-              {/* Status Filter Tabs matching prototype: All, New, Shortlisted, Interview, Selected, Rejected */}
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
-                  {[
-                    { id: 'All', label: 'All Candidates' },
-                    { id: 'APPLIED', label: 'New / Applied' },
-                    { id: 'SHORTLISTED', label: 'Shortlisted' },
-                    { id: 'INTERVIEW_SCHEDULED', label: 'Interview Scheduled' },
-                    { id: 'SELECTED', label: 'Selected / Hired' },
-                    { id: 'REJECTED', label: 'Rejected' }
-                  ].map(filter => (
-                    <button
-                      key={filter.id}
-                      onClick={() => setCandidateStatusFilter(filter.id)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
-                        candidateStatusFilter === filter.id
-                          ? 'bg-amber-600 text-white shadow-sm'
-                          : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50'
-                      }`}
-                    >
-                      {filter.label}
-                    </button>
-                  ))}
+              {/* Top Pipeline Funnel Metric Bar */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                <div 
+                  onClick={() => setCandidateStatusFilter('All')}
+                  className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
+                    candidateStatusFilter === 'All'
+                      ? 'bg-amber-500/10 border-amber-500/40 shadow-sm'
+                      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300'
+                  }`}
+                >
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">All Pipeline</p>
+                  <p className="text-xl font-black text-slate-900 dark:text-white mt-1">
+                    {candidates.length}
+                  </p>
                 </div>
 
-                {candidateJobFilter && (
-                  <button
-                    onClick={() => setCandidateJobFilter('')}
-                    className="text-xs text-rose-600 dark:text-rose-400 font-bold flex items-center gap-1 hover:underline"
-                  >
-                    Clear Job Filter <X className="w-3 h-3" />
-                  </button>
-                )}
+                {PIPELINE_STAGES.map(st => {
+                  const Icon = st.icon;
+                  const count = pipelineCandidatesByStage[st.id]?.length || 0;
+                  const isActive = candidateStatusFilter === st.id;
+                  return (
+                    <div 
+                      key={st.id}
+                      onClick={() => setCandidateStatusFilter(isActive ? 'All' : st.id)}
+                      className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
+                        isActive
+                          ? 'ring-2 ring-amber-500 bg-amber-500/10 border-amber-500'
+                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 truncate">{st.label}</p>
+                        <Icon className="w-3.5 h-3.5 text-slate-400" />
+                      </div>
+                      <p className="text-xl font-black text-slate-900 dark:text-white mt-1">
+                        {count}
+                      </p>
+                    </div>
+                  );
+                })}
               </div>
 
-              {/* Search input */}
-              <div className="relative max-w-md">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                <input 
-                  type="text" 
-                  placeholder="Search candidate by name, email, role..." 
-                  value={candidateSearch}
-                  onChange={(e) => setCandidateSearch(e.target.value)}
-                  className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl pl-9 pr-4 py-2 text-sm focus:border-amber-500 outline-none text-slate-800 dark:text-slate-100 shadow-sm"
-                />
-              </div>
-
-              {/* Candidates Table */}
-              <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
-                {filteredCandidates.length === 0 ? (
-                  <div className="p-12 text-center text-slate-500">
-                    <Users className="w-12 h-12 mx-auto text-slate-400 mb-3 opacity-40" />
-                    <p className="font-bold text-base text-slate-800 dark:text-slate-200">No Candidates Found</p>
-                    <p className="text-xs text-slate-500 mt-1">Try adjusting your filters or search keywords.</p>
+              {/* Action & Filter Bar */}
+              <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-3 flex-1">
+                  {/* Search input */}
+                  <div className="relative flex-1 min-w-[200px] max-w-md">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <input 
+                      type="text" 
+                      placeholder="Search by candidate name, email, role, skills..." 
+                      value={candidateSearch}
+                      onChange={(e) => setCandidateSearch(e.target.value)}
+                      className="w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl pl-9 pr-4 py-2 text-xs focus:border-amber-500 outline-none text-slate-800 dark:text-slate-100"
+                    />
+                    {candidateSearch && (
+                      <button 
+                        onClick={() => setCandidateSearch('')}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    )}
                   </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-sm">
-                      <thead>
-                        <tr className="border-b border-slate-200 dark:border-slate-800 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 bg-slate-50/50 dark:bg-slate-800/20">
-                          <th className="py-3.5 px-4">Candidate</th>
-                          <th className="py-3.5 px-4">Applied Job</th>
-                          <th className="py-3.5 px-4">AI Score</th>
-                          <th className="py-3.5 px-4">Coding Solved</th>
-                          <th className="py-3.5 px-4">Applied Date</th>
-                          <th className="py-3.5 px-4">Status</th>
-                          <th className="py-3.5 px-4 text-right">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                        {filteredCandidates.map((candidate) => (
-                          <tr key={candidate.application_id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
-                            <td className="py-3.5 px-4">
-                              <div className="flex items-center gap-3">
-                                <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-amber-500 to-indigo-500 text-white font-bold flex items-center justify-center text-xs shadow-sm">
-                                  {candidate.name?.charAt(0) || 'U'}
+
+                  {/* Job Filter Dropdown */}
+                  <div className="min-w-[180px]">
+                    <select
+                      value={candidateJobFilter}
+                      onChange={(e) => setCandidateJobFilter(e.target.value)}
+                      className="w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 dark:text-slate-200 outline-none focus:border-amber-500"
+                    >
+                      <option value="">All Job Openings ({jobs.length})</option>
+                      {jobs.map(j => (
+                        <option key={j.id} value={j.id}>
+                          {j.title} {j.applications_count ? `(${j.applications_count} apps)` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {candidateJobFilter && (
+                    <button
+                      onClick={() => setCandidateJobFilter('')}
+                      className="text-xs text-rose-600 dark:text-rose-400 font-bold flex items-center gap-1 hover:underline"
+                    >
+                      Clear Job Filter <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
+                {/* View Switcher: Board vs Table */}
+                <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl self-start md:self-center">
+                  <button
+                    onClick={() => setPipelineViewMode('board')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                      pipelineViewMode === 'board'
+                        ? 'bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 shadow-sm'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                    }`}
+                  >
+                    <Kanban className="w-3.5 h-3.5" /> Pipeline Board
+                  </button>
+                  <button
+                    onClick={() => setPipelineViewMode('table')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                      pipelineViewMode === 'table'
+                        ? 'bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 shadow-sm'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                    }`}
+                  >
+                    <List className="w-3.5 h-3.5" /> Table View
+                  </button>
+                </div>
+              </div>
+
+              {/* VIEW 1: KANBAN PIPELINE BOARD */}
+              {pipelineViewMode === 'board' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 items-start">
+                  {PIPELINE_STAGES.map(stage => {
+                    const StageIcon = stage.icon;
+                    const stageCandidates = pipelineCandidatesByStage[stage.id] || [];
+
+                    return (
+                      <div 
+                        key={stage.id}
+                        onDragOver={handleDragOver}
+                        onDrop={(e) => handleDropOnStage(e, stage.id)}
+                        className={`rounded-3xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/40 p-3.5 min-h-[500px] flex flex-col transition-colors ${stage.headerBg}`}
+                      >
+                        {/* Column Header */}
+                        <div className="flex items-center justify-between mb-3 pb-2.5 border-b border-slate-200/70 dark:border-slate-800">
+                          <div className="flex items-center gap-2">
+                            <StageIcon className="w-4 h-4" />
+                            <div>
+                              <h3 className="text-xs font-black uppercase tracking-wider">
+                                {stage.label}
+                              </h3>
+                              <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                                {stage.sublabel}
+                              </p>
+                            </div>
+                          </div>
+                          <span className={`text-xs px-2.5 py-0.5 rounded-full font-black ${stage.badgeBg}`}>
+                            {stageCandidates.length}
+                          </span>
+                        </div>
+
+                        {/* Candidate Cards List */}
+                        <div className="space-y-3 flex-1">
+                          {stageCandidates.length === 0 ? (
+                            <div className="h-44 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-2xl flex flex-col items-center justify-center p-4 text-center text-slate-400">
+                              <StageIcon className="w-6 h-6 mb-1 opacity-30" />
+                              <p className="text-xs font-bold text-slate-500">No candidates</p>
+                              <p className="text-[10px] mt-0.5">Drag candidate here to advance stage</p>
+                            </div>
+                          ) : (
+                            stageCandidates.map(candidate => (
+                              <div
+                                key={candidate.application_id}
+                                draggable
+                                onDragStart={(e) => handleDragStart(e, candidate)}
+                                className={`p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-sm hover:shadow-md transition-all cursor-grab active:cursor-grabbing ${
+                                  draggingCandidateId === candidate.application_id ? 'opacity-40 scale-95 border-amber-400' : ''
+                                }`}
+                              >
+                                {/* Candidate Top Info */}
+                                <div className="flex items-start justify-between gap-2 mb-2">
+                                  <div className="flex items-center gap-2.5 min-w-0">
+                                    <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-amber-500 to-indigo-500 text-white font-bold flex items-center justify-center text-xs shadow-sm flex-shrink-0">
+                                      {candidate.name?.charAt(0) || 'U'}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <h4 className="font-bold text-xs text-slate-900 dark:text-white truncate">
+                                        {candidate.name}
+                                      </h4>
+                                      <p className="text-[11px] text-slate-400 truncate">
+                                        {candidate.email}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border flex-shrink-0 ${getStatusBadge(candidate.status)}`}>
+                                    {candidate.status || 'APPLIED'}
+                                  </span>
                                 </div>
-                                <div>
-                                  <p className="font-bold text-slate-900 dark:text-white">{candidate.name}</p>
-                                  <p className="text-xs text-slate-500">{candidate.email}</p>
+
+                                {/* Applied Role */}
+                                <div className="mb-2 text-xs">
+                                  <p className="font-semibold text-slate-800 dark:text-slate-200 truncate">
+                                    {candidate.applied_for || 'General Drive'}
+                                  </p>
+                                  {candidate.location && (
+                                    <p className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
+                                      <MapPin className="w-3 h-3 text-slate-400" /> {candidate.location}
+                                    </p>
+                                  )}
+                                </div>
+
+                                {/* Readiness Chips (AI Mock + Coding) */}
+                                <div className="flex flex-wrap items-center gap-1.5 mb-2.5">
+                                  {candidate.avg_interview_score ? (
+                                    <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold flex items-center gap-1 ${
+                                      Number(candidate.avg_interview_score) >= 80
+                                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                        : 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
+                                    }`}>
+                                      <Sparkles className="w-2.5 h-2.5" /> {candidate.avg_interview_score}% AI Score
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] text-slate-400 italic">No AI Mock</span>
+                                  )}
+
+                                  {candidate.coding_solved !== undefined && (
+                                    <span className="text-[10px] px-2 py-0.5 rounded-md font-bold bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300 flex items-center gap-1">
+                                      <Code className="w-2.5 h-2.5" /> {candidate.coding_solved} Solved
+                                    </span>
+                                  )}
+                                </div>
+
+                                {/* Scheduled Interview info if any */}
+                                {candidate.interview_details?.schedule_time && (
+                                  <div className="mb-2.5 p-2 rounded-xl bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800/40 text-[11px] text-purple-900 dark:text-purple-300">
+                                    <div className="flex items-center gap-1 font-bold">
+                                      <Calendar className="w-3 h-3 text-purple-600" />
+                                      <span>{candidate.interview_details.stage || 'Interview Scheduled'}</span>
+                                    </div>
+                                    <p className="text-[10px] text-purple-700 dark:text-purple-400 mt-0.5">
+                                      {new Date(candidate.interview_details.schedule_time).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
+                                    </p>
+                                  </div>
+                                )}
+
+                                {/* Applied date */}
+                                <div className="text-[10px] text-slate-400 flex items-center justify-between mb-2">
+                                  <span>Applied {formatDate(candidate.applied_at)}</span>
+                                </div>
+
+                                {/* Systematic Stage Actions Bar */}
+                                <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-1">
+                                  {stage.id === 'APPLIED' && (
+                                    <div className="flex items-center gap-1 flex-wrap">
+                                      <button
+                                        onClick={() => handleStageMove(candidate.application_id, 'SHORTLISTED')}
+                                        className="px-2 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-bold text-[11px] shadow-sm transition-colors"
+                                      >
+                                        ⭐ Shortlist
+                                      </button>
+                                      <button
+                                        onClick={() => handleStageMove(candidate.application_id, 'REJECTED')}
+                                        className="px-2 py-1 rounded-lg text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 font-bold text-[11px] transition-colors"
+                                      >
+                                        Reject
+                                      </button>
+                                    </div>
+                                  )}
+
+                                  {stage.id === 'SHORTLISTED' && (
+                                    <div className="flex items-center gap-1 flex-wrap">
+                                      <button
+                                        onClick={() => handleOpenScheduleModal(candidate)}
+                                        className="px-2.5 py-1 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-bold text-[11px] shadow-sm transition-colors flex items-center gap-1"
+                                      >
+                                        <Calendar className="w-3 h-3" /> Schedule
+                                      </button>
+                                      <button
+                                        onClick={() => handleStageMove(candidate.application_id, 'SELECTED')}
+                                        className="px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] shadow-sm transition-colors"
+                                      >
+                                        Offer
+                                      </button>
+                                    </div>
+                                  )}
+
+                                  {stage.id === 'INTERVIEW_SCHEDULED' && (
+                                    <div className="flex items-center gap-1 flex-wrap">
+                                      <button
+                                        onClick={() => handleStageMove(candidate.application_id, 'SELECTED')}
+                                        className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] shadow-sm transition-colors flex items-center gap-1"
+                                      >
+                                        <CheckCircle2 className="w-3 h-3" /> Make Offer
+                                      </button>
+                                      <button
+                                        onClick={() => handleOpenScheduleModal(candidate)}
+                                        className="px-2 py-1 rounded-lg text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-950/40 font-bold text-[11px] transition-colors"
+                                      >
+                                        Round 2
+                                      </button>
+                                    </div>
+                                  )}
+
+                                  {stage.id === 'SELECTED' && (
+                                    <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1">
+                                      <CheckCircle2 className="w-3.5 h-3.5" /> Hired / Selected
+                                    </span>
+                                  )}
+
+                                  {stage.id === 'REJECTED' && (
+                                    <button
+                                      onClick={() => handleStageMove(candidate.application_id, 'REVIEWING')}
+                                      className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-[11px] flex items-center gap-1 transition-colors"
+                                    >
+                                      <RotateCcw className="w-3 h-3" /> Re-evaluate
+                                    </button>
+                                  )}
+
+                                  {/* View Profile */}
+                                  <button
+                                    onClick={() => handleViewCandidate(candidate)}
+                                    className="ml-auto px-2 py-1 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-bold text-[11px] transition-colors"
+                                  >
+                                    Profile →
+                                  </button>
                                 </div>
                               </div>
-                            </td>
-                            <td className="py-3.5 px-4 font-semibold text-slate-800 dark:text-slate-200">
-                              {candidate.applied_for || 'General'}
-                              {candidate.location && (
-                                <p className="text-xs text-slate-400 font-normal">{candidate.location}</p>
-                              )}
-                            </td>
-                            <td className="py-3.5 px-4">
-                              {candidate.avg_interview_score ? (
-                                <span className={`text-xs px-2 py-0.5 rounded-md font-bold ${
-                                  candidate.avg_interview_score >= 80 
-                                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300'
-                                    : 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'
-                                }`}>
-                                  {candidate.avg_interview_score}% AI Score
-                                </span>
-                              ) : (
-                                <span className="text-xs text-slate-400 italic">No AI Mock Yet</span>
-                              )}
-                            </td>
-                            <td className="py-3.5 px-4 text-xs font-semibold text-slate-700 dark:text-slate-300">
-                              {candidate.coding_solved !== undefined ? (
-                                <span className="flex items-center gap-1">
-                                  <Code className="w-3.5 h-3.5 text-indigo-500" /> {candidate.coding_solved} Problems
-                                </span>
-                              ) : '-'}
-                            </td>
-                            <td className="py-3.5 px-4 text-xs text-slate-500 font-medium">
-                              {formatDate(candidate.applied_at)}
-                            </td>
-                            <td className="py-3.5 px-4">
-                              <span className={`text-xs px-2.5 py-1 rounded-full font-bold border ${getStatusBadge(candidate.status)}`}>
-                                {candidate.status || 'APPLIED'}
-                              </span>
-                            </td>
-                            <td className="py-3.5 px-4 text-right">
-                              <button
-                                onClick={() => handleViewCandidate(candidate)}
-                                className="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-sm transition-colors"
-                              >
-                                View Profile
-                              </button>
-                            </td>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* VIEW 2: TRADITIONAL TABLE VIEW */}
+              {pipelineViewMode === 'table' && (
+                <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
+                  {filteredCandidates.length === 0 ? (
+                    <div className="p-12 text-center text-slate-500">
+                      <Users className="w-12 h-12 mx-auto text-slate-400 mb-3 opacity-40" />
+                      <p className="font-bold text-base text-slate-800 dark:text-slate-200">No Candidates Found</p>
+                      <p className="text-xs text-slate-500 mt-1">Try adjusting your filters or search keywords.</p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-200 dark:border-slate-800 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 bg-slate-50/50 dark:bg-slate-800/20">
+                            <th className="py-3.5 px-4">Candidate</th>
+                            <th className="py-3.5 px-4">Applied Job</th>
+                            <th className="py-3.5 px-4">AI Score</th>
+                            <th className="py-3.5 px-4">Coding Solved</th>
+                            <th className="py-3.5 px-4">Status & Stage Mover</th>
+                            <th className="py-3.5 px-4">Applied Date</th>
+                            <th className="py-3.5 px-4 text-right">Actions</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                          {filteredCandidates.map((candidate) => (
+                            <tr key={candidate.application_id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
+                              <td className="py-3.5 px-4">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-amber-500 to-indigo-500 text-white font-bold flex items-center justify-center text-xs shadow-sm">
+                                    {candidate.name?.charAt(0) || 'U'}
+                                  </div>
+                                  <div>
+                                    <p className="font-bold text-slate-900 dark:text-white">{candidate.name}</p>
+                                    <p className="text-xs text-slate-500">{candidate.email}</p>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="py-3.5 px-4 font-semibold text-slate-800 dark:text-slate-200">
+                                {candidate.applied_for || 'General'}
+                                {candidate.location && (
+                                  <p className="text-xs text-slate-400 font-normal">{candidate.location}</p>
+                                )}
+                              </td>
+                              <td className="py-3.5 px-4">
+                                {candidate.avg_interview_score ? (
+                                  <span className={`text-xs px-2 py-0.5 rounded-md font-bold ${
+                                    Number(candidate.avg_interview_score) >= 80 
+                                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300'
+                                      : 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'
+                                  }`}>
+                                    {candidate.avg_interview_score}% AI Score
+                                  </span>
+                                ) : (
+                                  <span className="text-xs text-slate-400 italic">No AI Mock Yet</span>
+                                )}
+                              </td>
+                              <td className="py-3.5 px-4 text-xs font-semibold text-slate-700 dark:text-slate-300">
+                                {candidate.coding_solved !== undefined ? (
+                                  <span className="flex items-center gap-1">
+                                    <Code className="w-3.5 h-3.5 text-indigo-500" /> {candidate.coding_solved} Problems
+                                  </span>
+                                ) : '-'}
+                              </td>
+                              <td className="py-3.5 px-4">
+                                <div className="flex items-center gap-2">
+                                  <span className={`text-xs px-2.5 py-1 rounded-full font-bold border ${getStatusBadge(candidate.status)}`}>
+                                    {candidate.status || 'APPLIED'}
+                                  </span>
+                                  {/* Quick Stage Progression Dropdown */}
+                                  <select
+                                    value={candidate.status}
+                                    onChange={(e) => handleStageMove(candidate.application_id, e.target.value)}
+                                    className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] font-semibold rounded-lg px-2 py-1 text-slate-700 dark:text-slate-300 outline-none cursor-pointer"
+                                  >
+                                    <option value="APPLIED">Applied / Review</option>
+                                    <option value="SHORTLISTED">Shortlisted</option>
+                                    <option value="INTERVIEW_SCHEDULED">Interview</option>
+                                    <option value="SELECTED">Selected / Hired</option>
+                                    <option value="REJECTED">Rejected</option>
+                                  </select>
+                                </div>
+                              </td>
+                              <td className="py-3.5 px-4 text-xs text-slate-500 font-medium">
+                                {formatDate(candidate.applied_at)}
+                              </td>
+                              <td className="py-3.5 px-4 text-right">
+                                <div className="flex items-center justify-end gap-1.5">
+                                  {candidate.status === 'SHORTLISTED' && (
+                                    <button
+                                      onClick={() => handleOpenScheduleModal(candidate)}
+                                      className="px-2.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs shadow-sm transition-colors"
+                                    >
+                                      Schedule
+                                    </button>
+                                  )}
+                                  <button
+                                    onClick={() => handleViewCandidate(candidate)}
+                                    className="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-sm transition-colors"
+                                  >
+                                    View Profile
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -1637,21 +2095,25 @@ export default function HRDashboard({ initialTab = 'overview', onNavigate }) {
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <button
                       onClick={() => handleUpdateCandidateStatus(selectedCandidate.application_id, 'SHORTLISTED')}
-                      className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-sm transition-colors"
+                      className={`px-3 py-1.5 rounded-lg text-white font-bold text-xs shadow-sm transition-colors ${
+                        selectedCandidate.status === 'SHORTLISTED' ? 'bg-amber-600 ring-2 ring-amber-400' : 'bg-amber-500 hover:bg-amber-600'
+                      }`}
                     >
-                      Shortlist
+                      ⭐ Shortlist
                     </button>
                     <button
                       onClick={() => handleOpenScheduleModal(selectedCandidate)}
-                      className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs shadow-sm transition-colors"
+                      className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs shadow-sm transition-colors flex items-center gap-1"
                     >
-                      Schedule Interview
+                      <Calendar className="w-3.5 h-3.5" /> Schedule Interview
                     </button>
                     <button
                       onClick={() => handleUpdateCandidateStatus(selectedCandidate.application_id, 'SELECTED')}
-                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm transition-colors"
+                      className={`px-3 py-1.5 rounded-lg text-white font-bold text-xs shadow-sm transition-colors ${
+                        ['SELECTED', 'OFFERED', 'HIRED'].includes(selectedCandidate.status) ? 'bg-emerald-700 ring-2 ring-emerald-400' : 'bg-emerald-600 hover:bg-emerald-700'
+                      }`}
                     >
-                      Mark Selected
+                      🎯 Make Offer / Selected
                     </button>
                     <button
                       onClick={() => handleUpdateCandidateStatus(selectedCandidate.application_id, 'REJECTED')}
@@ -1659,6 +2121,14 @@ export default function HRDashboard({ initialTab = 'overview', onNavigate }) {
                     >
                       Reject
                     </button>
+                    {selectedCandidate.status === 'REJECTED' && (
+                      <button
+                        onClick={() => handleUpdateCandidateStatus(selectedCandidate.application_id, 'REVIEWING')}
+                        className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300 font-bold text-xs transition-colors"
+                      >
+                        Re-evaluate
+                      </button>
+                    )}
                   </div>
                 </div>
 

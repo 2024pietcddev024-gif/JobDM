@@ -457,7 +457,13 @@ router.get('/candidates', async (req, res) => {
         ${completedInterviewsSql('u.id')} as interview_count,
         ${avgInterviewScoreSql('u.id')} as avg_interview_score,
         (SELECT COUNT(DISTINCT problem_id) FROM coding_attempts WHERE user_id = u.id AND status = 'solved') as coding_solved,
-        (SELECT extracted_skills FROM resumes WHERE user_id = u.id ORDER BY created_at DESC LIMIT 1) as skills
+        (SELECT extracted_skills FROM resumes WHERE user_id = u.id ORDER BY created_at DESC LIMIT 1) as skills,
+        (SELECT json_build_object(
+          'id', hi.id,
+          'schedule_time', hi.schedule_time,
+          'stage', hi.stage,
+          'status', hi.status
+        ) FROM hr_interviews hi WHERE hi.application_id = ha.id ORDER BY hi.created_at DESC LIMIT 1) as interview_details
       FROM hr_applications ha
       JOIN hr_jobs hj ON ha.job_id = hj.id
       JOIN users u ON ha.candidate_id = u.id
@@ -467,8 +473,19 @@ router.get('/candidates', async (req, res) => {
     let idx = 2;
 
     if (status && status !== 'All') {
-      query += ` AND ha.status = $${idx++}`;
-      params.push(status.toUpperCase());
+      const upperStatus = status.toUpperCase();
+      if (upperStatus === 'APPLIED' || upperStatus === 'NEW') {
+        query += ` AND ha.status IN ('APPLIED', 'REVIEWING', 'NEW')`;
+      } else if (upperStatus === 'SELECTED' || upperStatus === 'HIRED' || upperStatus === 'OFFERED') {
+        query += ` AND ha.status IN ('SELECTED', 'HIRED', 'OFFERED')`;
+      } else if (upperStatus === 'INTERVIEW_SCHEDULED' || upperStatus === 'INTERVIEW') {
+        query += ` AND ha.status IN ('INTERVIEW_SCHEDULED', 'INTERVIEW', 'SCHEDULED')`;
+      } else if (upperStatus === 'REJECTED') {
+        query += ` AND ha.status IN ('REJECTED', 'CANCELLED')`;
+      } else {
+        query += ` AND ha.status = $${idx++}`;
+        params.push(upperStatus);
+      }
     }
 
     if (job_id) {
