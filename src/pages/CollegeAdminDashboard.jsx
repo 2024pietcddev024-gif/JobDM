@@ -32,11 +32,17 @@ const fetchApi = async (path, method = 'GET', body = null) => {
   return data;
 };
 
-export default function CollegeAdminDashboard() {
+export default function CollegeAdminDashboard({ initialTab = 'overview', onNavigate }) {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState(initialTab);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
 
   // Data state
   const [college, setCollege] = useState(null);
@@ -481,7 +487,23 @@ export default function CollegeAdminDashboard() {
         {['overview', 'bulk-provision', 'college', 'departments', 'batches', 'tutors', 'students'].map(t => (
           <button 
             key={t}
-            onClick={() => { setActiveTab(t); setError(''); setSelectedStudentId(null); }}
+            onClick={() => { 
+              setActiveTab(t); 
+              setError(''); 
+              setSelectedStudentId(null);
+              if (onNavigate) {
+                const navMap = {
+                  'overview': 'college-admin-overview',
+                  'bulk-provision': 'college-admin-bulk',
+                  'college': 'college-admin-college',
+                  'departments': 'college-admin-departments',
+                  'batches': 'college-admin-batches',
+                  'tutors': 'college-admin-tutors',
+                  'students': 'college-admin-students'
+                };
+                onNavigate(navMap[t] || 'college-admin-overview');
+              }
+            }}
             className={`px-4 py-2 text-sm font-semibold rounded-lg capitalize transition-colors whitespace-nowrap flex items-center gap-1.5 ${
               activeTab === t ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:text-slate-200 hover:bg-white dark:bg-white/5'
             }`}

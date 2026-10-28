@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Briefcase, Flame, User, LogOut, ChevronDown, Menu, X, PlusCircle, Moon, Sun } from 'lucide-react';
+import { Briefcase, Flame, User, LogOut, ChevronDown, Menu, X, PlusCircle, Moon, Sun, Building2 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 
 export default function Navbar({ onNavigate, currentPage, toggleSidebar, isSidebarOpen }) {
@@ -52,6 +52,13 @@ export default function Navbar({ onNavigate, currentPage, toggleSidebar, isSideb
           </div>
         )}
 
+        {user?.campus?.role === 'COLLEGE_ADMIN' && (
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-indigo-500/10 border border-indigo-500/30 text-indigo-700 dark:text-indigo-300 font-bold text-xs shadow-sm">
+            <Building2 className="w-3.5 h-3.5 text-indigo-500" />
+            <span>College Admin</span>
+          </div>
+        )}
+
         {user?.campus?.role === 'HR' && (
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 font-bold text-xs shadow-sm">
             <span>Corporate Recruiter</span>
@@ -90,7 +97,14 @@ export default function Navbar({ onNavigate, currentPage, toggleSidebar, isSideb
                   <p className="text-sm font-semibold text-slate-900 dark:text-white">{user?.name || user?.full_name}</p>
                   <p className="text-xs text-slate-600 dark:text-slate-400">{user?.email}</p>
                 </div>
-                <button onClick={() => { onNavigate(user?.campus?.role === 'TUTOR' ? 'teacher-profile' : 'profile'); setShowUserDropdown(false); }}
+                <button onClick={() => { 
+                  onNavigate(
+                    user?.campus?.role === 'TUTOR' ? 'teacher-profile' : 
+                    user?.campus?.role === 'COLLEGE_ADMIN' ? 'college-admin-college' : 
+                    'profile'
+                  ); 
+                  setShowUserDropdown(false); 
+                }}
                   className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:bg-white/10 hover:text-slate-900 dark:text-white transition-colors">
                   <User className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
                   <span>My Profile</span>

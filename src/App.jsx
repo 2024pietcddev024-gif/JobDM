@@ -38,7 +38,7 @@ export const getDashboardForRole = (role) => {
     case 'SUPER_ADMIN':
       return 'registrar-overview';
     case 'COLLEGE_ADMIN':
-      return 'college-admin';
+      return 'college-admin-overview';
     case 'STUDENT':
     default:
       return 'dashboard';
@@ -98,7 +98,7 @@ export function AppContent() {
     if ((currentPage === 'dashboard' || currentPage === '') && user) {
       if (role === 'TUTOR') return <TutorDashboard initialTab="overview" onNavigate={handleNavigate} />;
       if (role === 'SUPER_ADMIN') return <RegistrarDashboard initialTab="overview" onNavigate={handleNavigate} />;
-      if (role === 'COLLEGE_ADMIN') return <CollegeAdminDashboard />;
+      if (role === 'COLLEGE_ADMIN') return <CollegeAdminDashboard initialTab="overview" onNavigate={handleNavigate} />;
       if (role === 'HR') return <HRDashboard initialTab="overview" onNavigate={handleNavigate} />;
     }
 
@@ -157,8 +157,27 @@ export function AppContent() {
 
       // College Admin Protected Routes
       case 'college-admin':
+      case 'college-admin-overview':
         if (!isCollegeAdmin) return <AccessDenied role={role} onNavigate={handleNavigate} />;
-        return <CollegeAdminDashboard />;
+        return <CollegeAdminDashboard initialTab="overview" onNavigate={handleNavigate} />;
+      case 'college-admin-bulk':
+        if (!isCollegeAdmin) return <AccessDenied role={role} onNavigate={handleNavigate} />;
+        return <CollegeAdminDashboard initialTab="bulk-provision" onNavigate={handleNavigate} />;
+      case 'college-admin-college':
+        if (!isCollegeAdmin) return <AccessDenied role={role} onNavigate={handleNavigate} />;
+        return <CollegeAdminDashboard initialTab="college" onNavigate={handleNavigate} />;
+      case 'college-admin-departments':
+        if (!isCollegeAdmin) return <AccessDenied role={role} onNavigate={handleNavigate} />;
+        return <CollegeAdminDashboard initialTab="departments" onNavigate={handleNavigate} />;
+      case 'college-admin-batches':
+        if (!isCollegeAdmin) return <AccessDenied role={role} onNavigate={handleNavigate} />;
+        return <CollegeAdminDashboard initialTab="batches" onNavigate={handleNavigate} />;
+      case 'college-admin-tutors':
+        if (!isCollegeAdmin) return <AccessDenied role={role} onNavigate={handleNavigate} />;
+        return <CollegeAdminDashboard initialTab="tutors" onNavigate={handleNavigate} />;
+      case 'college-admin-students':
+        if (!isCollegeAdmin) return <AccessDenied role={role} onNavigate={handleNavigate} />;
+        return <CollegeAdminDashboard initialTab="students" onNavigate={handleNavigate} />;
 
       // Teacher Protected Routes
       case 'tutor':

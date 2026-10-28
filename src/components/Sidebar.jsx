@@ -2,7 +2,7 @@ import React from 'react';
 import { 
   LayoutDashboard, PlayCircle, History, Terminal, Award, User, 
   HelpCircle, Brain, ShieldCheck, Building2, BookOpen, Users, 
-  Briefcase, Calendar, BarChart3, Settings
+  Briefcase, Calendar, BarChart3, Settings, FileSpreadsheet, GraduationCap
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -19,6 +19,16 @@ export default function Sidebar({ currentPage, onNavigate, isSidebarOpen }) {
       { id: 'registrar-departments', label: 'Departments', icon: BookOpen },
       { id: 'registrar-batches', label: 'Batches', icon: Calendar },
       { id: 'registrar-admins', label: 'College Admins', icon: ShieldCheck }
+    ];
+  } else if (user?.campus?.role === 'COLLEGE_ADMIN') {
+    menuItems = [
+      { id: 'college-admin-overview', label: 'Admin Overview', icon: LayoutDashboard },
+      { id: 'college-admin-bulk', label: 'Bulk Onboarding', icon: FileSpreadsheet, badge: 'Roster' },
+      { id: 'college-admin-college', label: 'College Info', icon: Building2 },
+      { id: 'college-admin-departments', label: 'Departments', icon: BookOpen },
+      { id: 'college-admin-batches', label: 'Batches', icon: Calendar },
+      { id: 'college-admin-tutors', label: 'Faculty & Tutors', icon: Users },
+      { id: 'college-admin-students', label: 'Enrolled Students', icon: GraduationCap }
     ];
   } else if (user?.campus?.role === 'TUTOR') {
     menuItems = [
@@ -48,10 +58,6 @@ export default function Sidebar({ currentPage, onNavigate, isSidebarOpen }) {
       { id: 'leaderboard', label: 'Leaderboard', icon: Award },
       { id: 'profile', label: 'My Profile', icon: User }
     ];
-
-    if (user?.campus?.role === 'COLLEGE_ADMIN') {
-      menuItems.push({ id: 'college-admin', label: 'College Admin', icon: Building2, badge: 'Admin' });
-    }
   }
 
 
@@ -68,6 +74,7 @@ export default function Sidebar({ currentPage, onNavigate, isSidebarOpen }) {
         {menuItems.map((item) => {
           const Icon = item.icon;
           const isActive = currentPage === item.id || 
+            ((currentPage === 'dashboard' || currentPage === 'college-admin') && item.id === 'college-admin-overview') ||
             ((currentPage === 'dashboard' || currentPage === 'registrar') && item.id === 'registrar-overview');
 
           return (
@@ -107,6 +114,16 @@ export default function Sidebar({ currentPage, onNavigate, isSidebarOpen }) {
           </div>
           <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
             Full authority over institution licensing, campus onboarding & enterprise HR provisioning.
+          </p>
+        </div>
+      ) : user?.campus?.role === 'COLLEGE_ADMIN' ? (
+        <div className="p-3.5 rounded-2xl bg-gradient-to-br from-indigo-50 to-blue-50 dark:from-indigo-900/40 dark:to-indigo-900/20 border border-indigo-100 dark:border-indigo-500/20 shadow-sm">
+          <div className="flex items-center gap-2 mb-1.5">
+            <Building2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+            <span className="text-xs font-bold text-slate-900 dark:text-white">College Admin Portal</span>
+          </div>
+          <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+            Manage your institution's departments, faculty, student rosters, and batch analytics.
           </p>
         </div>
       ) : user?.campus?.role === 'TUTOR' ? (
