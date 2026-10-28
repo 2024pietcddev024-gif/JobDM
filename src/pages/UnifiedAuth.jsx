@@ -616,7 +616,7 @@ export default function UnifiedAuth({ initialMode = 'login', onNavigate }) {
                     type="text"
                     required
                     value={name}
-                    onChange={(e) => setName(e.target.value)}
+                    onChange={(e) => { setName(e.target.value); if (error) setError(''); }}
                     placeholder="John Doe"
                     className="w-full pl-10 pr-4 py-2.5 rounded-xl glass-input text-sm"
                     autoFocus
@@ -636,7 +636,7 @@ export default function UnifiedAuth({ initialMode = 'login', onNavigate }) {
                   type="text"
                   required
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => { setEmail(e.target.value); if (error) setError(''); }}
                   placeholder="name@example.com"
                   className="w-full pl-10 pr-4 py-2.5 rounded-xl glass-input text-sm"
                   autoFocus={mode === 'login'}
@@ -658,7 +658,7 @@ export default function UnifiedAuth({ initialMode = 'login', onNavigate }) {
                   <input
                     type="text"
                     value={collegeCode}
-                    onChange={(e) => setCollegeCode(e.target.value)}
+                    onChange={(e) => { setCollegeCode(e.target.value); if (error) setError(''); }}
                     placeholder="e.g. PIET-2026"
                     className="w-full pl-10 pr-4 py-2.5 rounded-xl glass-input text-sm"
                   />
@@ -683,7 +683,7 @@ export default function UnifiedAuth({ initialMode = 'login', onNavigate }) {
                   <input
                     type="email"
                     value={institutionalEmail}
-                    onChange={(e) => setInstitutionalEmail(e.target.value)}
+                    onChange={(e) => { setInstitutionalEmail(e.target.value); if (error) setError(''); }}
                     placeholder="e.g. student@college.edu.in"
                     className="w-full pl-10 pr-4 py-2.5 rounded-xl glass-input text-sm"
                   />
@@ -716,7 +716,7 @@ export default function UnifiedAuth({ initialMode = 'login', onNavigate }) {
                   type={showPassword ? "text" : "password"}
                   required
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => { setPassword(e.target.value); if (error) setError(''); }}
                   placeholder="••••••••"
                   className="w-full pl-10 pr-10 py-2.5 rounded-xl glass-input text-sm"
                 />

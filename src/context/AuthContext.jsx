@@ -71,11 +71,27 @@ export const AuthProvider = ({ children }) => {
       if (expectedRole) payload.panel = expectedRole;
       if (collegeCode) payload.college_code = collegeCode;
 
-      const res = await fetch(`${API_URL}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+      const executeLogin = async () => {
+        return await fetch(`${API_URL}/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      };
+
+      let res;
+      try {
+        res = await executeLogin();
+      } catch (_) {
+        // Automatic retry after 1s in case server was in the middle of a restart
+        await new Promise(r => setTimeout(r, 1000));
+        res = await executeLogin();
+      }
+
+      if (res.status === 503) {
+        await new Promise(r => setTimeout(r, 1000));
+        res = await executeLogin();
+      }
       
       let data = null;
       try {
@@ -133,11 +149,26 @@ export const AuthProvider = ({ children }) => {
       if (role) payload.role = role;
       if (institutionalEmail) payload.institutional_email = institutionalEmail;
 
-      const res = await fetch(`${API_URL}/auth/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+      const executeSignup = async () => {
+        return await fetch(`${API_URL}/auth/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      };
+
+      let res;
+      try {
+        res = await executeSignup();
+      } catch (_) {
+        await new Promise(r => setTimeout(r, 1000));
+        res = await executeSignup();
+      }
+
+      if (res.status === 503) {
+        await new Promise(r => setTimeout(r, 1000));
+        res = await executeSignup();
+      }
       
       let data = null;
       try {
