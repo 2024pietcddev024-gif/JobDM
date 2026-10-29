@@ -46,6 +46,11 @@ export default function InterviewSession({ onNavigate }) {
   const lastTabEventRef = useRef(0);
   const lastClipboardEventRef = useRef(0);
 
+  const isInsecureNetworkOrigin = typeof window !== 'undefined' &&
+    !window.isSecureContext &&
+    window.location.hostname !== 'localhost' &&
+    window.location.hostname !== '127.0.0.1';
+
   useEffect(() => {
     answerTextRef.current = answerText;
   }, [answerText]);
@@ -230,7 +235,11 @@ export default function InterviewSession({ onNavigate }) {
     if (isMicOn) {
       speechManager.onError = (err) => {
         if (err === 'not-allowed' || err === 'service-not-allowed') {
-          setSpeechError('Microphone access denied. Click the 🔒 icon in your browser address bar and allow microphone access, then try again.');
+          if (isInsecureNetworkOrigin) {
+            setSpeechError(`Microphone access is restricted by Chrome on network IP (${window.location.hostname}). Open on http://localhost:5173 for full microphone support.`);
+          } else {
+            setSpeechError('Microphone access denied. Click the 🔒 icon in your browser address bar and allow microphone access, then try again.');
+          }
           setIsMicOn(false);
         } else if (err === 'not-supported') {
           setSpeechError('Speech recognition requires Chrome or Microsoft Edge. Please switch browser or type your answer.');
@@ -479,6 +488,27 @@ export default function InterviewSession({ onNavigate }) {
           </button>
         </div>
       </div>
+
+      {/* ─── Network Origin / Localhost Switcher Notice ───────────────────── */}
+      {isInsecureNetworkOrigin && (
+        <div className="rounded-2xl p-3.5 bg-amber-500/15 border border-amber-400/30 flex flex-wrap items-center justify-between gap-3 text-xs text-amber-900 dark:text-amber-200 shadow-sm animate-in fade-in">
+          <div className="flex items-center gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+            <span>
+              <strong>Network IP Detected ({window.location.hostname}):</strong> Chrome &amp; Edge restrict camera and voice recognition over insecure network IPs. For live webcam and speech-to-text, open on <strong>localhost</strong>.
+            </span>
+          </div>
+          <button
+            onClick={() => {
+              const port = window.location.port ? `:${window.location.port}` : '';
+              window.location.href = `http://localhost${port}${window.location.pathname}${window.location.search}${window.location.hash}`;
+            }}
+            className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-md transition-all shrink-0"
+          >
+            Switch to http://localhost:5173
+          </button>
+        </div>
+      )}
 
       {/* ─── Main Cockpit ───────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

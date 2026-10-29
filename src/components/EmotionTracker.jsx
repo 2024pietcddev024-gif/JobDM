@@ -3,7 +3,7 @@ import { analyzeCameraFrame } from '../services/metricsEngine';
 import { 
   Camera, CameraOff, Eye, Smile, Activity, AlertCircle, 
   ShieldCheck, ShieldAlert, Check, Info, Users, UserX, 
-  RefreshCw, Lock
+  RefreshCw, Lock, Sparkles, ExternalLink, Laptop, Radio
 } from 'lucide-react';
 
 export default function EmotionTracker({ 
@@ -16,6 +16,7 @@ export default function EmotionTracker({
 }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
+  const virtualCanvasRef = useRef(null);
   const streamRef = useRef(null);
   const proctorIntervalRef = useRef(null);
   const lastViolationTimeRef = useRef(0);
@@ -34,6 +35,23 @@ export default function EmotionTracker({
   const [faceStatus, setFaceStatus] = useState('SCANNING'); // 'VERIFIED' | 'NO_FACE' | 'MULTIPLE_FACES' | 'LOOKING_AWAY' | 'SCANNING'
   const [faceCount, setFaceCount] = useState(1);
   const [activeAlert, setActiveAlert] = useState(null);
+
+  // Virtual AI Proctoring Simulation Mode (for devices without camera or insecure network IPs)
+  const [isVirtualMode, setIsVirtualMode] = useState(false);
+  const [virtualScenario, setVirtualScenario] = useState('NORMAL'); // 'NORMAL' | 'ABSENT' | 'MULTI_FACE' | 'LOOKING_AWAY'
+
+  // Detect if user is visiting via network IP (which Chrome blocks from using navigator.mediaDevices on HTTP)
+  const isInsecureNetworkOrigin = typeof window !== 'undefined' &&
+    !window.isSecureContext &&
+    window.location.hostname !== 'localhost' &&
+    window.location.hostname !== '127.0.0.1';
+
+  // 1-Click switch to localhost
+  const handleSwitchToLocalhost = () => {
+    if (typeof window === 'undefined') return;
+    const port = window.location.port ? `:${window.location.port}` : '';
+    window.location.href = `http://localhost${port}${window.location.pathname}${window.location.search}${window.location.hash}`;
+  };
 
   // Play short subtle audio alert on proctoring warning
   const playAlertSound = useCallback((frequency = 440) => {
@@ -56,8 +74,44 @@ export default function EmotionTracker({
     }
   }, []);
 
+  // Multi-layer safe camera acquisition
+  const getCameraStream = async () => {
+    if (navigator?.mediaDevices?.getUserMedia) {
+      try {
+        return await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            facingMode: 'user'
+          },
+          audio: false
+        });
+      } catch (idealErr) {
+        console.warn('[ProctoringCam] Ideal constraints failed, falling back to basic video:true', idealErr);
+        return await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false
+        });
+      }
+    }
+
+    const legacyGUM = navigator?.getUserMedia ||
+      navigator?.webkitGetUserMedia ||
+      navigator?.mozGetUserMedia ||
+      navigator?.msGetUserMedia;
+
+    if (legacyGUM) {
+      return new Promise((resolve, reject) => {
+        legacyGUM.call(navigator, { video: true, audio: false }, resolve, reject);
+      });
+    }
+
+    throw new Error('MEDIA_DEVICES_NOT_SUPPORTED');
+  };
+
   // Request & attach camera stream
   const initializeCamera = useCallback(async () => {
+    setIsVirtualMode(false);
     setHasCameraError(false);
     setCameraErrorMessage('');
 
@@ -67,26 +121,20 @@ export default function EmotionTracker({
     }
 
     try {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        throw new Error('Your browser does not support mediaDevices video capture.');
-      }
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-          facingMode: 'user'
-        },
-        audio: false
-      });
-
+      const stream = await getCameraStream();
       streamRef.current = stream;
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        videoRef.current.onloadedmetadata = () => {
-          videoRef.current.play().catch(e => console.warn('[ProctoringCam] video play error:', e));
-        };
+        videoRef.current.setAttribute('playsinline', 'true');
+        videoRef.current.setAttribute('muted', 'true');
+        try {
+          await videoRef.current.play();
+        } catch (e) {
+          videoRef.current.onloadedmetadata = () => {
+            videoRef.current?.play().catch(err => console.warn('[ProctoringCam] play error:', err));
+          };
+        }
       }
 
       setIsWebcamActive(true);
@@ -97,21 +145,28 @@ export default function EmotionTracker({
       console.warn('[ProctoringCam] Camera acquisition failed:', err);
       setHasCameraError(true);
       setIsLiveAnalysis(false);
+
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        setCameraErrorMessage('Camera permission was denied. Please allow camera access in your browser settings to proceed with proctored interview.');
+        setCameraErrorMessage('Camera permission was denied. Please allow camera access in your browser address bar to proceed with proctored interview.');
       } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-        setCameraErrorMessage('No camera device detected. Please attach a webcam or enable your camera.');
+        setCameraErrorMessage('No camera device detected. Please attach a webcam or use the Virtual AI Camera simulation.');
+      } else if (err.message === 'MEDIA_DEVICES_NOT_SUPPORTED') {
+        if (isInsecureNetworkOrigin) {
+          setCameraErrorMessage(`Browsers block camera access over network IP (${window.location.hostname}). Chrome requires localhost or HTTPS for webcam access.`);
+        } else {
+          setCameraErrorMessage('Camera capture is not supported or blocked in this browser.');
+        }
       } else {
         setCameraErrorMessage(err.message || 'Unable to access video camera.');
       }
     }
-  }, [setIsWebcamActive]);
+  }, [isInsecureNetworkOrigin, setIsWebcamActive]);
 
   // Start camera on mount if active or if user turns it on
   useEffect(() => {
-    if (isWebcamActive) {
+    if (isWebcamActive && !isVirtualMode) {
       initializeCamera();
-    } else {
+    } else if (!isWebcamActive) {
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(t => t.stop());
         streamRef.current = null;
@@ -128,7 +183,7 @@ export default function EmotionTracker({
         clearInterval(proctorIntervalRef.current);
       }
     };
-  }, [isWebcamActive, initializeCamera]);
+  }, [isWebcamActive, isVirtualMode, initializeCamera]);
 
   // Trigger violation with cooldown to prevent spam
   const reportSecurityViolation = useCallback((violationType, details = {}) => {
@@ -155,14 +210,13 @@ export default function EmotionTracker({
     }
   }, [onProctoringViolation, playAlertSound]);
 
-  // Real-time Face & Anti-Cheating Analysis Loop
+  // Real-time Face & Anti-Cheating Analysis Loop (For Real Camera)
   useEffect(() => {
-    if (!isLiveAnalysis || !isWebcamActive || isTerminated) return;
+    if (!isLiveAnalysis || !isWebcamActive || isVirtualMode || isTerminated) return;
 
     let detector = null;
     if (typeof window !== 'undefined' && 'FaceDetector' in window) {
       try {
-        // Native GPU-accelerated FaceDetector available in Chromium
         detector = new window.FaceDetector({ fastMode: true, maxDetectedFaces: 5 });
       } catch (e) {
         detector = null;
@@ -196,11 +250,9 @@ export default function EmotionTracker({
             }
           }
         } catch (e) {
-          // fallback to canvas analysis
           detectedCount = analyzeCanvasFrame(video);
         }
       } else {
-        // Fallback canvas frame analysis
         detectedCount = analyzeCanvasFrame(video);
         setFaceCount(detectedCount);
       }
@@ -211,7 +263,6 @@ export default function EmotionTracker({
         lookingAwayFramesRef.current = 0;
         setFaceStatus('NO_FACE');
 
-        // If face missing for >= 3 intervals (~4.5s)
         if (noFaceFramesRef.current >= 3) {
           reportSecurityViolation('FACE_NOT_DETECTED', {
             durationSeconds: Math.round(noFaceFramesRef.current * 1.5)
@@ -222,12 +273,10 @@ export default function EmotionTracker({
         lookingAwayFramesRef.current = 0;
         setFaceStatus('MULTIPLE_FACES');
 
-        // Immediate violation for second person
         reportSecurityViolation('MULTIPLE_FACES', {
           detectedFacesCount: detectedCount
         });
       } else {
-        // Exactly 1 face
         noFaceFramesRef.current = 0;
 
         if (isGazeLookingAway) {
@@ -250,7 +299,7 @@ export default function EmotionTracker({
         clearInterval(proctorIntervalRef.current);
       }
     };
-  }, [isLiveAnalysis, isWebcamActive, isTerminated, reportSecurityViolation]);
+  }, [isLiveAnalysis, isWebcamActive, isVirtualMode, isTerminated, reportSecurityViolation]);
 
   // Fallback Canvas Skin & Centroid Analysis for non-FaceDetector browsers
   const analyzeCanvasFrame = (video) => {
@@ -275,7 +324,6 @@ export default function EmotionTracker({
         const r = data[i];
         const g = data[i + 1];
         const b = data[i + 2];
-        // Standard normalized skin tone range in YCbCr/RGB
         if (r > 60 && g > 40 && b > 20 && r > g && r > b && Math.abs(r - g) > 12) {
           skinPixels++;
           const pixelIndex = i / 4;
@@ -285,9 +333,7 @@ export default function EmotionTracker({
         }
       }
 
-      // If skin pixels are under minimum threshold, no face is present
       if (skinPixels < 45) return 0;
-      // If two widely separated large skin clusters are detected on both far ends
       if (leftHalfSkin > 80 && rightHalfSkin > 80) return 2;
       return 1;
     } catch (e) {
@@ -295,8 +341,256 @@ export default function EmotionTracker({
     }
   };
 
+  // ─── Virtual AI Proctor Animation & Simulation Loop ───────────────────────
+  const drawCandidateFigure = (ctx, cx, cy, color, breathY, turnedAway = false) => {
+    // Shoulders
+    ctx.fillStyle = '#1e293b';
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + 90, 75, 45, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Neck
+    ctx.fillStyle = '#334155';
+    ctx.fillRect(cx - 16, cy + 30, 32, 35);
+
+    // Head
+    ctx.fillStyle = '#cbd5e1';
+    ctx.beginPath();
+    ctx.ellipse(cx + (turnedAway ? 20 : 0), cy - 20, 42, 55, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Hair
+    ctx.fillStyle = '#1e1b4b';
+    ctx.beginPath();
+    ctx.arc(cx + (turnedAway ? 20 : 0), cy - 35, 44, Math.PI, 0);
+    ctx.fill();
+
+    // Eyes
+    const now = Date.now();
+    const isBlink = (now % 3500) < 180;
+    if (!turnedAway) {
+      if (isBlink) {
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(cx - 24, cy - 20);
+        ctx.lineTo(cx - 8, cy - 20);
+        ctx.moveTo(cx + 8, cy - 20);
+        ctx.lineTo(cx + 24, cy - 20);
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.ellipse(cx - 16, cy - 20, 8, 5, 0, 0, Math.PI * 2);
+        ctx.ellipse(cx + 16, cy - 20, 8, 5, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#3b82f6';
+        ctx.beginPath();
+        ctx.arc(cx - 16, cy - 20, 3.5, 0, Math.PI * 2);
+        ctx.arc(cx + 16, cy - 20, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Mouth
+      ctx.strokeStyle = '#475569';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy + 12, 12, 0.2, Math.PI - 0.2);
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = '#3b82f6';
+      ctx.beginPath();
+      ctx.arc(cx + 38, cy - 20, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  };
+
+  useEffect(() => {
+    if (!isVirtualMode || isTerminated) return;
+
+    let animId;
+    let tickCount = 0;
+    const canvas = virtualCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+
+    const renderVirtualFeed = () => {
+      tickCount++;
+      const w = canvas.width;
+      const h = canvas.height;
+
+      // Dark background
+      const bgGrad = ctx.createLinearGradient(0, 0, w, h);
+      bgGrad.addColorStop(0, '#090d16');
+      bgGrad.addColorStop(1, '#0f172a');
+      ctx.fillStyle = bgGrad;
+      ctx.fillRect(0, 0, w, h);
+
+      // Grid
+      ctx.strokeStyle = 'rgba(99, 102, 241, 0.08)';
+      ctx.lineWidth = 1;
+      for (let x = 0; x < w; x += 40) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, h);
+        ctx.stroke();
+      }
+      for (let y = 0; y < h; y += 40) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+        ctx.stroke();
+      }
+
+      // Sweeping radar scan line
+      const scanY = (tickCount * 2) % h;
+      const scanGrad = ctx.createLinearGradient(0, scanY - 20, 0, scanY + 5);
+      scanGrad.addColorStop(0, 'rgba(56, 189, 248, 0)');
+      scanGrad.addColorStop(1, 'rgba(56, 189, 248, 0.22)');
+      ctx.fillStyle = scanGrad;
+      ctx.fillRect(0, scanY - 20, w, 25);
+
+      const time = Date.now() / 1000;
+      const breathY = Math.sin(time * 2.5) * 3;
+
+      if (virtualScenario === 'NORMAL') {
+        drawCandidateFigure(ctx, w / 2, h / 2 + 35 + breathY, '#6366f1', breathY, false);
+
+        ctx.strokeStyle = '#10b981';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([8, 4]);
+        ctx.strokeRect(w / 2 - 80, h / 2 - 95 + breathY, 160, 200);
+        ctx.setLineDash([]);
+
+        ctx.fillStyle = '#10b981';
+        ctx.font = 'bold 11px monospace';
+        ctx.fillText('CANDIDATE: ID #4829 [VERIFIED]', w / 2 - 75, h / 2 - 105 + breathY);
+      } else if (virtualScenario === 'ABSENT') {
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 6]);
+        ctx.strokeRect(w / 2 - 90, h / 2 - 80, 180, 170);
+        ctx.setLineDash([]);
+
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.15)';
+        ctx.fillRect(w / 2 - 90, h / 2 - 80, 180, 170);
+
+        ctx.fillStyle = '#f87171';
+        ctx.font = 'bold 13px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('⚠️ NO CANDIDATE DETECTED', w / 2, h / 2);
+        ctx.font = '10px sans-serif';
+        ctx.fillStyle = '#fca5a5';
+        ctx.fillText('Student moved out of camera frame', w / 2, h / 2 + 20);
+        ctx.textAlign = 'left';
+      } else if (virtualScenario === 'MULTI_FACE') {
+        // Candidate 1
+        drawCandidateFigure(ctx, w / 2 - 90, h / 2 + 40 + breathY, '#6366f1', breathY, false);
+        ctx.strokeStyle = '#10b981';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(w / 2 - 145, h / 2 - 70 + breathY, 110, 150);
+        ctx.fillStyle = '#10b981';
+        ctx.font = 'bold 9px monospace';
+        ctx.fillText('CANDIDATE [P1]', w / 2 - 140, h / 2 - 78 + breathY);
+
+        // Person 2
+        drawCandidateFigure(ctx, w / 2 + 90, h / 2 + 45 + breathY, '#ef4444', breathY, false);
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 2.5;
+        ctx.strokeRect(w / 2 + 35, h / 2 - 70 + breathY, 110, 150);
+        ctx.fillStyle = '#ef4444';
+        ctx.font = 'bold 9px monospace';
+        ctx.fillText('UNAUTHORIZED [P2]', w / 2 + 40, h / 2 - 78 + breathY);
+
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.9)';
+        ctx.fillRect(w / 2 - 130, 15, 260, 22);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('🚨 MULTIPLE FACES DETECTED IN FRAME', w / 2, 30);
+        ctx.textAlign = 'left';
+      } else if (virtualScenario === 'LOOKING_AWAY') {
+        drawCandidateFigure(ctx, w / 2, h / 2 + 35 + breathY, '#f59e0b', breathY, true);
+
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(w / 2 - 80, h / 2 - 95 + breathY, 160, 200);
+
+        ctx.strokeStyle = '#f59e0b';
+        ctx.fillStyle = '#f59e0b';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(w / 2 + 10, h / 2 - 30 + breathY);
+        ctx.lineTo(w / 2 + 100, h / 2 - 30 + breathY);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(w / 2 + 100, h / 2 - 30 + breathY);
+        ctx.lineTo(w / 2 + 88, h / 2 - 38 + breathY);
+        ctx.lineTo(w / 2 + 88, h / 2 - 22 + breathY);
+        ctx.fill();
+
+        ctx.fillStyle = '#f59e0b';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillText('GAZE VECTOR: OFF-SCREEN', w / 2 - 75, h / 2 - 105 + breathY);
+      }
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+      ctx.font = '9px monospace';
+      ctx.fillText('AI PROCTOR SIMULATOR • 30 FPS', 12, h - 12);
+
+      animId = requestAnimationFrame(renderVirtualFeed);
+    };
+
+    renderVirtualFeed();
+    return () => cancelAnimationFrame(animId);
+  }, [isVirtualMode, virtualScenario, isTerminated]);
+
+  // Virtual Mode Proctoring Interval
+  useEffect(() => {
+    if (!isVirtualMode || isTerminated) return;
+
+    const interval = setInterval(() => {
+      if (virtualScenario === 'NORMAL') {
+        setFaceStatus('VERIFIED');
+        setFaceCount(1);
+        noFaceFramesRef.current = 0;
+        lookingAwayFramesRef.current = 0;
+        setMetrics({ eyeContactScore: 92, emotion: 'Focused', confidenceLevel: 'High' });
+      } else if (virtualScenario === 'ABSENT') {
+        setFaceStatus('NO_FACE');
+        setFaceCount(0);
+        noFaceFramesRef.current += 1;
+        setMetrics({ eyeContactScore: 0, emotion: 'Absent', confidenceLevel: 'None' });
+        if (noFaceFramesRef.current >= 3) {
+          reportSecurityViolation('FACE_NOT_DETECTED', { durationSeconds: 5 });
+        }
+      } else if (virtualScenario === 'MULTI_FACE') {
+        setFaceStatus('MULTIPLE_FACES');
+        setFaceCount(2);
+        noFaceFramesRef.current = 0;
+        setMetrics({ eyeContactScore: 65, emotion: 'Distracted', confidenceLevel: 'Medium' });
+        reportSecurityViolation('MULTIPLE_FACES', { detectedFacesCount: 2 });
+      } else if (virtualScenario === 'LOOKING_AWAY') {
+        setFaceStatus('LOOKING_AWAY');
+        setFaceCount(1);
+        lookingAwayFramesRef.current += 1;
+        setMetrics({ eyeContactScore: 28, emotion: 'Unfocused', confidenceLevel: 'Low' });
+        if (lookingAwayFramesRef.current >= 2) {
+          reportSecurityViolation('SUSPICIOUS_GAZE', { note: 'Gaze diverted from interview window' });
+        }
+      }
+    }, 1500);
+
+    return () => clearInterval(interval);
+  }, [isVirtualMode, virtualScenario, isTerminated, reportSecurityViolation]);
+
   const handleToggleCam = () => {
-    if (isWebcamActive) {
+    if (isVirtualMode) {
+      setIsVirtualMode(false);
+      setIsWebcamActive(false);
+    } else if (isWebcamActive) {
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(t => t.stop());
         streamRef.current = null;
@@ -326,7 +620,48 @@ export default function EmotionTracker({
           ? 'border-amber-500 ring-1 ring-amber-500/40'
           : 'border-slate-800'
       }`}>
-        {isWebcamActive && !hasCameraError ? (
+        {isVirtualMode ? (
+          <>
+            <canvas
+              ref={virtualCanvasRef}
+              width={640}
+              height={480}
+              className="w-full h-full object-cover"
+            />
+
+            {/* Live Proctoring Status Badge for Virtual Mode */}
+            <div className="absolute top-2 left-2 flex flex-wrap gap-1.5 z-10">
+              <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-indigo-950/90 backdrop-blur-md text-[10px] font-black text-indigo-300 tracking-wider uppercase border border-indigo-500/40">
+                <Sparkles className="w-3 h-3 text-indigo-400" />
+                VIRTUAL AI PROCTOR
+              </span>
+
+              {faceStatus === 'VERIFIED' && (
+                <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-950/90 backdrop-blur-md text-[10px] font-bold text-emerald-300 border border-emerald-500/40">
+                  <Check className="w-3 h-3 text-emerald-400" /> Face Verified (1 Person)
+                </span>
+              )}
+
+              {faceStatus === 'NO_FACE' && (
+                <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-950/90 backdrop-blur-md text-[10px] font-black text-rose-300 border border-rose-500/50 animate-pulse">
+                  <UserX className="w-3 h-3 text-rose-400" /> No Face Detected
+                </span>
+              )}
+
+              {faceStatus === 'MULTIPLE_FACES' && (
+                <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-950/90 backdrop-blur-md text-[10px] font-black text-rose-300 border border-rose-500/50 animate-pulse">
+                  <Users className="w-3 h-3 text-rose-400" /> Multiple Faces ({faceCount})
+                </span>
+              )}
+
+              {faceStatus === 'LOOKING_AWAY' && (
+                <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-950/90 backdrop-blur-md text-[10px] font-bold text-amber-300 border border-amber-500/40">
+                  <Eye className="w-3 h-3 text-amber-400" /> Looking Away
+                </span>
+              )}
+            </div>
+          </>
+        ) : isWebcamActive && !hasCameraError ? (
           <>
             <video
               ref={videoRef}
@@ -390,19 +725,46 @@ export default function EmotionTracker({
             
             <div>
               <p className="text-xs font-bold text-white">
-                {hasCameraError ? 'Camera Permission Required' : 'Camera Feed Paused'}
+                {hasCameraError 
+                  ? (isInsecureNetworkOrigin ? 'Browser Camera Restriction (Network IP)' : 'Camera Permission Required') 
+                  : 'Camera Feed Paused'}
               </p>
-              <p className="text-[11px] text-slate-400 max-w-[260px] leading-tight mt-0.5">
-                {cameraErrorMessage || 'Proctored interviews require a working camera to verify your identity and prevent cheating.'}
+              <p className="text-[11px] text-slate-300 max-w-[280px] leading-tight mt-0.5">
+                {isInsecureNetworkOrigin
+                  ? `Chrome & Edge block camera/mic on network IP (${window?.location?.hostname}). Switch to localhost for real camera or use Virtual AI Camera.`
+                  : (cameraErrorMessage || 'Proctored interviews require a camera to verify identity. Click below to grant permission, or use Virtual AI Camera.')}
               </p>
             </div>
 
-            <button
-              onClick={initializeCamera}
-              className="mt-1 px-4 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-md transition-colors"
-            >
-              <RefreshCw className="w-3.5 h-3.5" /> Grant / Start Camera
-            </button>
+            <div className="flex flex-col sm:flex-row gap-2 w-full max-w-xs pt-1">
+              {isInsecureNetworkOrigin ? (
+                <button
+                  onClick={handleSwitchToLocalhost}
+                  className="flex-1 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-indigo-600/30 transition-all"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" /> Switch to localhost:5173
+                </button>
+              ) : (
+                <button
+                  onClick={initializeCamera}
+                  className="flex-1 px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md transition-colors"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" /> Grant / Start Camera
+                </button>
+              )}
+
+              <button
+                onClick={() => {
+                  setHasCameraError(false);
+                  setIsVirtualMode(true);
+                  setIsLiveAnalysis(true);
+                  setFaceStatus('VERIFIED');
+                }}
+                className="flex-1 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-indigo-500/40 font-bold text-xs flex items-center justify-center gap-1.5 shadow-md transition-all"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-indigo-400" /> Virtual AI Camera
+              </button>
+            </div>
           </div>
         )}
 
@@ -416,6 +778,64 @@ export default function EmotionTracker({
           </span>
         </div>
       </div>
+
+      {/* Virtual AI Proctoring Test Suite Controls (Shown when in Virtual Mode) */}
+      {isVirtualMode && (
+        <div className="p-2.5 rounded-xl bg-slate-900 border border-indigo-500/30 space-y-2">
+          <div className="flex items-center justify-between text-[11px]">
+            <span className="font-bold text-indigo-300 flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-indigo-400" /> Virtual AI Proctoring Simulator
+            </span>
+            <button
+              onClick={() => {
+                setIsVirtualMode(false);
+                initializeCamera();
+              }}
+              className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 transition-colors"
+            >
+              Try Real Camera
+            </button>
+          </div>
+          <div className="grid grid-cols-4 gap-1.5 text-[10px] font-bold">
+            <button
+              onClick={() => { setVirtualScenario('NORMAL'); noFaceFramesRef.current = 0; }}
+              className={`p-1.5 rounded-lg border text-center transition-all ${
+                virtualScenario === 'NORMAL' ? 'bg-emerald-600 text-white border-emerald-400 shadow-xs' : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+              }`}
+              title="Candidate verified in frame"
+            >
+              ✓ 1 Face
+            </button>
+            <button
+              onClick={() => { setVirtualScenario('ABSENT'); }}
+              className={`p-1.5 rounded-lg border text-center transition-all ${
+                virtualScenario === 'ABSENT' ? 'bg-rose-600 text-white border-rose-400 shadow-xs' : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+              }`}
+              title="Simulate student leaving camera"
+            >
+              🚫 Leave
+            </button>
+            <button
+              onClick={() => { setVirtualScenario('MULTI_FACE'); }}
+              className={`p-1.5 rounded-lg border text-center transition-all ${
+                virtualScenario === 'MULTI_FACE' ? 'bg-rose-600 text-white border-rose-400 shadow-xs' : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+              }`}
+              title="Simulate 2nd person in camera"
+            >
+              👥 2nd Person
+            </button>
+            <button
+              onClick={() => { setVirtualScenario('LOOKING_AWAY'); }}
+              className={`p-1.5 rounded-lg border text-center transition-all ${
+                virtualScenario === 'LOOKING_AWAY' ? 'bg-amber-600 text-white border-amber-400 shadow-xs' : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+              }`}
+              title="Simulate looking away from screen"
+            >
+              👀 Look Away
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Control & Security HUD */}
       <div className="flex items-center justify-between px-1 text-xs">
@@ -433,23 +853,39 @@ export default function EmotionTracker({
           </span>
         </div>
 
-        <button
-          onClick={handleToggleCam}
-          className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-colors ${
-            isWebcamActive 
-              ? 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-300' 
-              : 'bg-amber-600 text-white hover:bg-amber-700 shadow-sm'
-          }`}
-        >
-          {isWebcamActive ? 'Disable Camera' : 'Enable Camera'}
-        </button>
+        <div className="flex items-center gap-1.5">
+          {!isVirtualMode && hasCameraError && (
+            <button
+              onClick={() => {
+                setHasCameraError(false);
+                setIsVirtualMode(true);
+                setIsLiveAnalysis(true);
+                setFaceStatus('VERIFIED');
+              }}
+              className="px-2 py-1 rounded-lg text-[11px] font-bold bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-700 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-500/30 transition-colors"
+            >
+              Virtual Cam
+            </button>
+          )}
+
+          <button
+            onClick={handleToggleCam}
+            className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-colors ${
+              (isWebcamActive || isVirtualMode)
+                ? 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-300' 
+                : 'bg-amber-600 text-white hover:bg-amber-700 shadow-sm'
+            }`}
+          >
+            {(isWebcamActive || isVirtualMode) ? 'Disable Camera' : 'Enable Camera'}
+          </button>
+        </div>
       </div>
 
       {/* Security Disclaimer Notice */}
       <div className="p-2 rounded-xl bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/5 text-[10px] text-slate-500 dark:text-slate-400 leading-snug flex items-start gap-1.5">
         <Lock className="w-3.5 h-3.5 shrink-0 mt-0.5 text-indigo-500" />
         <span>
-          <strong>Proctoring Notice:</strong> Face & voice activity are monitored continuously on-device. If cheating, absence, or secondary voices are detected (3 warnings), the interview is <strong>automatically terminated</strong>.
+          <strong>Proctoring Notice:</strong> Face &amp; voice activity are monitored continuously on-device. If cheating, absence, or secondary voices are detected (3 warnings), the interview is <strong>automatically terminated</strong>.
         </span>
       </div>
     </div>
