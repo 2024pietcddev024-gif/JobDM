@@ -35,7 +35,7 @@ if (isValidDbUrl) {
   pool = new Pool({
     connectionString: dbUrl,
     ssl: { rejectUnauthorized: false }, // Required for Supabase
-    connectionTimeoutMillis: 10000,     // 10s timeout to connect (prevents indefinite hanging)
+    connectionTimeoutMillis: 30000,     // 30s timeout to allow for remote pooler latency/cold starts
     idleTimeoutMillis: 30000,           // Close idle clients after 30s
     max: 20,                            // Support up to 20 concurrent connections
     keepAlive: true,                    // Keep TCP connection alive
