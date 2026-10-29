@@ -19,6 +19,7 @@ export default function InterviewSession({ onNavigate }) {
     submitCurrentAnswer, skipCurrentQuestion, exitInterview,
     questionIndex, interviewError, interviewComplete, finalReport,
     isTerminated, terminationReason, tabSwitchCount, clipboardViolationCount,
+    proctoringViolationCount,
     reportViolation
   } = useInterview();
 
@@ -26,9 +27,10 @@ export default function InterviewSession({ onNavigate }) {
   const [speechError, setSpeechError] = useState(null);
   const [codeAnswer, setCodeAnswer] = useState('');
   const [isMicOn, setIsMicOn] = useState(false);
+  const [micVolume, setMicVolume] = useState(0);
   const [isTtsSpeaking, setIsTtsSpeaking] = useState(false);
   const [isTtsMuted, setIsTtsMuted] = useState(false);
-  const [isWebcamActive, setIsWebcamActive] = useState(false);
+  const [isWebcamActive, setIsWebcamActive] = useState(true);
   const [timerSeconds, setTimerSeconds] = useState(0);
   const [speechMetrics, setSpeechMetrics] = useState({ wordCount: 0, wpm: 0, fillerCount: 0 });
   const [submitSuccess, setSubmitSuccess] = useState(false);
@@ -39,9 +41,14 @@ export default function InterviewSession({ onNavigate }) {
   const [terminationModal, setTerminationModal] = useState({ show: false, message: '', type: '' });
 
   const timerSecondsRef = useRef(0);
+  const answerTextRef = useRef('');
   const hasNavigatedToReport = useRef(false);
   const lastTabEventRef = useRef(0);
   const lastClipboardEventRef = useRef(0);
+
+  useEffect(() => {
+    answerTextRef.current = answerText;
+  }, [answerText]);
 
   // ─── Navigate to report when naturally complete (not on termination) ────────
   useEffect(() => {
@@ -168,6 +175,31 @@ export default function InterviewSession({ onNavigate }) {
     }
   };
 
+  // ─── Anti-Cheating: Real-Time Proctoring (Face, Voice, Gaze) ─────────────
+  const handleProctoringViolation = useCallback(async (violationType, details = {}) => {
+    if (isTerminated || interviewComplete || !activeSession) return;
+
+    if (reportViolation) {
+      const res = await reportViolation(violationType, details);
+      if (res?.terminated) {
+        speechManager.stopListening();
+        speechManager.stopSpeaking();
+        setIsMicOn(false);
+        setTerminationModal({
+          show: true,
+          type: violationType,
+          message: res.message || 'Session terminated due to proctoring security violations.'
+        });
+      } else if (res?.warning) {
+        setWarningModal({
+          show: true,
+          type: violationType,
+          message: res.message || 'Security Warning: Suspicious activity detected. Cheating or absence will cancel the interview.'
+        });
+      }
+    }
+  }, [isTerminated, interviewComplete, activeSession, reportViolation]);
+
   // ─── TTS: speak question ──────────────────────────────────────────────────
   useEffect(() => {
     if (currentQuestion) {
@@ -193,7 +225,7 @@ export default function InterviewSession({ onNavigate }) {
     }
   }, [isTtsMuted]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ─── Speech recognition ───────────────────────────────────────────────────
+  // ─── Speech recognition & Voice Proctoring ───────────────────────────────
   useEffect(() => {
     if (isMicOn) {
       speechManager.onError = (err) => {
@@ -210,20 +242,29 @@ export default function InterviewSession({ onNavigate }) {
       speechManager.onStateChange = (listening) => {
         if (!listening) setIsMicOn(false);
       };
+      speechManager.onVolumeChange = (vol) => {
+        setMicVolume(vol);
+      };
+      speechManager.onVoiceAnomaly = (anomaly) => {
+        handleProctoringViolation('MULTIPLE_VOICES', { anomalyType: anomaly?.type || 'multiple_voices' });
+      };
       speechManager.startListening((liveText) => {
         setAnswerText(liveText);
         setSpeechError(null);
         setSpeechMetrics(analyzeTranscriptMetrics(liveText, timerSecondsRef.current));
-      });
+      }, answerTextRef.current);
     } else {
       speechManager.stopListening();
+      setMicVolume(0);
     }
     return () => {
       speechManager.onError = null;
       speechManager.onStateChange = null;
+      speechManager.onVolumeChange = null;
+      speechManager.onVoiceAnomaly = null;
       speechManager.stopListening();
     };
-  }, [isMicOn]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isMicOn, handleProctoringViolation]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Cleanup on unmount ───────────────────────────────────────────────────
   useEffect(() => {
@@ -303,7 +344,7 @@ export default function InterviewSession({ onNavigate }) {
               {warningModal.message}
             </p>
             <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/40 text-xs text-amber-800 dark:text-amber-300">
-              Note: This event has been logged to your session audit trail. A second policy violation will automatically terminate your session.
+              Note: This security event has been logged to your proctoring audit trail. Cheating or exceeding 3 warnings will automatically cancel and terminate your interview.
             </div>
             <button
               onClick={() => setWarningModal({ show: false, message: '', type: '' })}
@@ -491,17 +532,37 @@ export default function InterviewSession({ onNavigate }) {
                 </div>
                 <h4 className="font-extrabold text-slate-900 dark:text-white text-sm">Your Response</h4>
               </div>
-              <button
-                onClick={() => setIsMicOn(!isMicOn)}
-                disabled={isLoadingQuestion || isEvaluating || isTerminated}
-                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all disabled:opacity-50 ${
-                  isMicOn
-                    ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/30 animate-pulse'
-                    : 'bg-blue-100 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-500/30 hover:bg-blue-200/60'
-                }`}>
-                {isMicOn ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
-                <span>{isMicOn ? 'Recording... (Click to Stop)' : 'Click to Speak'}</span>
-              </button>
+              <div className="flex items-center gap-2">
+                {isMicOn && (
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-100/80 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800/40 text-rose-700 dark:text-rose-300 text-xs font-bold animate-in fade-in">
+                    <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+                    <span>Listening</span>
+                    <div className="flex items-end gap-0.5 h-3.5 ml-1">
+                      {[0.15, 0.35, 0.55, 0.75].map((threshold, idx) => (
+                        <div
+                          key={idx}
+                          className="w-1 bg-rose-500 rounded-full transition-all duration-75"
+                          style={{
+                            height: micVolume >= threshold ? '100%' : '25%',
+                            opacity: micVolume >= threshold ? 1 : 0.35
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <button
+                  onClick={() => setIsMicOn(!isMicOn)}
+                  disabled={isLoadingQuestion || isEvaluating || isTerminated}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all disabled:opacity-50 ${
+                    isMicOn
+                      ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-600/30'
+                      : 'bg-blue-100 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-500/30 hover:bg-blue-200/60'
+                  }`}>
+                  {isMicOn ? <Mic className="w-4 h-4 animate-bounce" /> : <MicOff className="w-4 h-4" />}
+                  <span>{isMicOn ? 'Stop Recording' : 'Click to Speak'}</span>
+                </button>
+              </div>
             </div>
 
             {speechError && (
@@ -558,7 +619,14 @@ export default function InterviewSession({ onNavigate }) {
 
         {/* Right — Webcam + Tips */}
         <div className="space-y-4">
-          <EmotionTracker isWebcamActive={isWebcamActive} setIsWebcamActive={setIsWebcamActive} fillerCount={speechMetrics.fillerCount} />
+          <EmotionTracker 
+            isWebcamActive={isWebcamActive} 
+            setIsWebcamActive={setIsWebcamActive} 
+            fillerCount={speechMetrics.fillerCount}
+            onProctoringViolation={handleProctoringViolation}
+            proctoringWarnings={proctoringViolationCount}
+            isTerminated={isTerminated}
+          />
 
           <div className="rounded-2xl p-5 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-500/30 space-y-3 shadow-sm">
             <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300 font-bold text-xs">
@@ -572,18 +640,19 @@ export default function InterviewSession({ onNavigate }) {
             </ul>
           </div>
 
-          {(tabSwitchCount > 0 || clipboardViolationCount > 0) && (
+          {(tabSwitchCount > 0 || clipboardViolationCount > 0 || proctoringViolationCount > 0) && (
             <div className="p-4 rounded-2xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-300/80 dark:border-amber-700/40 space-y-2">
               <div className="flex items-center gap-2 text-xs font-bold text-amber-800 dark:text-amber-300">
                 <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                <span>Policy Violation Status</span>
+                <span>Security & Proctoring Status</span>
               </div>
               <div className="text-xs text-slate-700 dark:text-slate-300 space-y-1">
+                <p>Security Warnings: <strong className={proctoringViolationCount >= 2 ? 'text-rose-600 dark:text-rose-400 font-bold' : 'text-amber-700 dark:text-amber-300'}>{proctoringViolationCount} of 3</strong></p>
                 {tabSwitchCount > 0 && (
-                  <p>Tab switches recorded: <strong className="text-amber-700 dark:text-amber-300">{tabSwitchCount} of 2</strong></p>
+                  <p>Tab switches recorded: <strong className="text-amber-700 dark:text-amber-300">{tabSwitchCount}</strong></p>
                 )}
                 {clipboardViolationCount > 0 && (
-                  <p>Clipboard actions recorded: <strong className="text-amber-700 dark:text-amber-300">{clipboardViolationCount} of 2</strong></p>
+                  <p>Clipboard actions recorded: <strong className="text-amber-700 dark:text-amber-300">{clipboardViolationCount}</strong></p>
                 )}
                 {isTerminated && (
                   <p className="text-rose-600 dark:text-rose-400 font-bold mt-1">Status: Session Terminated</p>

@@ -45,6 +45,7 @@ export const InterviewProvider = ({ children }) => {
   const [terminationReason, setTerminationReason] = useState(null);
   const [tabSwitchCount, setTabSwitchCount] = useState(0);
   const [clipboardViolationCount, setClipboardViolationCount] = useState(0);
+  const [proctoringViolationCount, setProctoringViolationCount] = useState(0);
 
   // Track all asked question texts to prevent repetition
   const askedQuestionsRef = useRef([]);
@@ -157,9 +158,10 @@ export const InterviewProvider = ({ children }) => {
       if (res.ok) {
         if (violationType === 'TAB_SWITCH') {
           setTabSwitchCount(data.violationCount);
-        } else {
+        } else if (violationType === 'CLIPBOARD_ACTION') {
           setClipboardViolationCount(data.violationCount);
         }
+        setProctoringViolationCount(data.violationCount || 0);
 
         if (data.terminated) {
           setIsTerminated(true);
@@ -204,6 +206,7 @@ export const InterviewProvider = ({ children }) => {
     setTerminationReason(null);
     setTabSwitchCount(0);
     setClipboardViolationCount(0);
+    setProctoringViolationCount(0);
     askedQuestionsRef.current = [];
 
     try {
@@ -431,6 +434,7 @@ export const InterviewProvider = ({ children }) => {
     setTerminationReason(null);
     setTabSwitchCount(0);
     setClipboardViolationCount(0);
+    setProctoringViolationCount(0);
     askedQuestionsRef.current = [];
     localStorage.removeItem('interviewiq_active_session');
   };
@@ -451,6 +455,7 @@ export const InterviewProvider = ({ children }) => {
       terminationReason,
       tabSwitchCount,
       clipboardViolationCount,
+      proctoringViolationCount,
       reportViolation,
       syncSessionStatus,
       startNewInterview,

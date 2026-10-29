@@ -4,7 +4,7 @@ import { useInterview } from '../context/InterviewContext';
 import { 
   Award, Download, ArrowLeft, CheckCircle2, AlertCircle, 
   Sparkles, MessageSquare, Mic, BookOpen, ChevronDown, ChevronUp,
-  Target, TrendingUp, AlertTriangle, SkipForward, ThumbsUp
+  Target, TrendingUp, AlertTriangle, SkipForward, ThumbsUp, ShieldCheck, ShieldAlert
 } from 'lucide-react';
 
 function ScoreBadge({ score }) {
@@ -178,9 +178,15 @@ export default function InterviewReport({ onNavigate }) {
       <div className="rounded-3xl p-6 lg:p-8 bg-fuchsia-50 dark:bg-fuchsia-900/20 border border-fuchsia-200 dark:border-fuchsia-500/30 overflow-hidden space-y-6 shadow-sm">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-fuchsia-100 dark:bg-fuchsia-500/20 border border-fuchsia-200 dark:border-fuchsia-500/30 text-fuchsia-800 dark:text-fuchsia-200 text-xs font-bold shadow-xs">
-              <CheckCircle2 className="w-3.5 h-3.5 text-fuchsia-600 dark:text-fuchsia-400" /> AI Practice Session Complete
-            </div>
+            {session?.status === 'TERMINATED' ? (
+              <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-rose-100 dark:bg-rose-500/20 border border-rose-200 dark:border-rose-500/30 text-rose-800 dark:text-rose-200 text-xs font-bold shadow-xs">
+                <AlertTriangle className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" /> Session Terminated Early (Proctoring Violation Limit Exceeded)
+              </div>
+            ) : (
+              <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-fuchsia-100 dark:bg-fuchsia-500/20 border border-fuchsia-200 dark:border-fuchsia-500/30 text-fuchsia-800 dark:text-fuchsia-200 text-xs font-bold shadow-xs">
+                <CheckCircle2 className="w-3.5 h-3.5 text-fuchsia-600 dark:text-fuchsia-400" /> AI Practice Session Complete
+              </div>
+            )}
             <h1 className="text-2xl lg:text-4xl font-black text-slate-900 dark:text-white font-['Outfit'] tracking-tight">
               {session?.role || session?.category || 'Interview'} Practice Report
             </h1>
@@ -214,6 +220,48 @@ export default function InterviewReport({ onNavigate }) {
               <span className={`text-2xl font-black font-['Outfit'] ${d.color}`}>{d.val}</span>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* Proctoring & Integrity Status */}
+      <div className={`rounded-2xl p-4 border flex flex-wrap items-center justify-between gap-4 text-xs ${
+        (session?.proctoring_violations_count > 0 || session?.status === 'TERMINATED')
+          ? 'bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800/40 text-amber-900 dark:text-amber-200'
+          : 'bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800/40 text-emerald-900 dark:text-emerald-200'
+      }`}>
+        <div className="flex items-center gap-3">
+          <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
+            (session?.proctoring_violations_count > 0 || session?.status === 'TERMINATED')
+              ? 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300'
+              : 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300'
+          }`}>
+            {(session?.proctoring_violations_count > 0 || session?.status === 'TERMINATED') ? (
+              <ShieldAlert className="w-4 h-4" />
+            ) : (
+              <ShieldCheck className="w-4 h-4" />
+            )}
+          </div>
+          <div>
+            <p className="font-bold text-slate-900 dark:text-white">
+              {(session?.status === 'TERMINATED')
+                ? 'Proctoring Status: Session Terminated'
+                : (session?.proctoring_violations_count > 0)
+                  ? 'Proctoring Status: Warnings Logged'
+                  : 'Proctoring Status: Integrity Verified'}
+            </p>
+            <p className="text-slate-600 dark:text-slate-400 text-[11px]">
+              {session?.status === 'TERMINATED'
+                ? (session?.termination_reason || 'Interview was cancelled due to repeated security/proctoring violations.')
+                : (session?.proctoring_violations_count > 0)
+                  ? `${session.proctoring_violations_count} security warning(s) were flagged during the session.`
+                  : 'Continuous face scan and single-speaker voice detection passed with zero security flags.'}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-4 text-[11px] font-semibold">
+          <span>Camera &amp; Face: <strong>{session?.face_violation_count ? `${session.face_violation_count} warning(s)` : 'Clear'}</strong></span>
+          <span>Voice: <strong>{session?.voice_violation_count ? `${session.voice_violation_count} warning(s)` : 'Clear'}</strong></span>
+          <span>Tab Switches: <strong>{session?.tab_switch_count || 0}</strong></span>
         </div>
       </div>
 

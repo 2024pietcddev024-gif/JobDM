@@ -316,17 +316,32 @@ router.post('/violation', authenticateToken, async (req, res) => {
   }
 
   const vType = String(violationType).toUpperCase();
-  if (vType !== 'TAB_SWITCH' && vType !== 'CLIPBOARD_ACTION') {
-    return res.status(400).json({ error: 'Invalid violationType. Must be TAB_SWITCH or CLIPBOARD_ACTION' });
+  const PROCTORING_VIOLATIONS = [
+    'TAB_SWITCH',
+    'CLIPBOARD_ACTION',
+    'FACE_NOT_DETECTED',
+    'MULTIPLE_FACES',
+    'SUSPICIOUS_GAZE',
+    'MULTIPLE_VOICES',
+    'FULLSCREEN_EXIT'
+  ];
+
+  if (!PROCTORING_VIOLATIONS.includes(vType)) {
+    return res.status(400).json({ 
+      error: `Invalid violationType. Must be one of: ${PROCTORING_VIOLATIONS.join(', ')}` 
+    });
   }
 
   if (String(sessionId).startsWith('ephemeral')) {
-    return res.json({ warning: true, terminated: false, violationType: vType, violationCount: 1, limit: 2 });
+    return res.json({ warning: true, terminated: false, violationType: vType, violationCount: 1, limit: 3 });
   }
 
   try {
     const sessionRes = await db.query(
-      'SELECT id, user_id, status, tab_switch_count, clipboard_violation_count, termination_reason, terminated_at FROM interview_sessions WHERE id = $1 AND user_id = $2',
+      `SELECT id, user_id, status, tab_switch_count, clipboard_violation_count, 
+              proctoring_violations_count, face_violation_count, voice_violation_count,
+              termination_reason, terminated_at 
+       FROM interview_sessions WHERE id = $1 AND user_id = $2`,
       [sessionId, req.user.id]
     );
 
@@ -336,25 +351,26 @@ router.post('/violation', authenticateToken, async (req, res) => {
 
     const session = sessionRes.rows[0];
 
-    // If already terminated, return terminated state idempotently without creating duplicate termination records
+    // If already terminated, return terminated state idempotently
     if (session.status === 'TERMINATED') {
-      const currentCount = vType === 'TAB_SWITCH' ? (session.tab_switch_count || 2) : (session.clipboard_violation_count || 2);
       return res.json({
         warning: false,
         terminated: true,
         alreadyTerminated: true,
         status: 'TERMINATED',
         violationType: vType,
-        violationCount: currentCount,
+        violationCount: (session.proctoring_violations_count || 3),
         tab_switch_count: session.tab_switch_count || 0,
         tabSwitchCount: session.tab_switch_count || 0,
         clipboard_violation_count: session.clipboard_violation_count || 0,
         clipboardViolationCount: session.clipboard_violation_count || 0,
-        limit: 2,
+        face_violation_count: session.face_violation_count || 0,
+        voice_violation_count: session.voice_violation_count || 0,
+        limit: 3,
         termination_reason: session.termination_reason,
         terminationReason: session.termination_reason,
         terminatedAt: session.terminated_at,
-        message: session.termination_reason || 'Session is already terminated.'
+        message: session.termination_reason || 'Interview session is already cancelled due to security policy violations.'
       });
     }
 
@@ -368,32 +384,60 @@ router.post('/violation', authenticateToken, async (req, res) => {
       });
     }
 
-    const countCol = vType === 'TAB_SWITCH' ? 'tab_switch_count' : 'clipboard_violation_count';
-    const newCount = (session[countCol] || 0) + 1;
+    // Calculate updated counts
+    let countCol = 'proctoring_violations_count';
+    if (vType === 'TAB_SWITCH') countCol = 'tab_switch_count';
+    else if (vType === 'CLIPBOARD_ACTION') countCol = 'clipboard_violation_count';
+    else if (['FACE_NOT_DETECTED', 'MULTIPLE_FACES', 'SUSPICIOUS_GAZE'].includes(vType)) countCol = 'face_violation_count';
+    else if (vType === 'MULTIPLE_VOICES') countCol = 'voice_violation_count';
+
+    const currentTypeCount = (session[countCol] || 0) + 1;
+    const totalViolations = (session.proctoring_violations_count || 0) + 1;
 
     // Log the event in session_violations
     await db.query(
       `INSERT INTO session_violations (session_id, session_type, student_id, violation_type, violation_count, details)
        VALUES ($1, 'INTERVIEW', $2, $3, $4, $5)`,
-      [sessionId, req.user.id, vType, newCount, JSON.stringify(details || {})]
+      [sessionId, req.user.id, vType, currentTypeCount, JSON.stringify(details || {})]
     );
 
-    const tabCount = vType === 'TAB_SWITCH' ? newCount : (session.tab_switch_count || 0);
-    const clipCount = vType === 'CLIPBOARD_ACTION' ? newCount : (session.clipboard_violation_count || 0);
+    const VIOLATION_LIMIT = 3;
 
-    if (newCount >= 2) {
-      const terminationReason = vType === 'TAB_SWITCH'
-        ? 'Session terminated because the tab-switch violation limit was reached.'
-        : 'Session terminated because the prohibited clipboard action limit was reached.';
+    // Determine warning message
+    let warningMessage = `Security Warning (${totalViolations} of ${VIOLATION_LIMIT}): `;
+    if (vType === 'MULTIPLE_FACES') {
+      warningMessage += 'Multiple faces detected in camera. Only the student is allowed in the interview.';
+    } else if (vType === 'FACE_NOT_DETECTED') {
+      warningMessage += 'Face not detected in camera frame. Please stay directly in front of the camera.';
+    } else if (vType === 'MULTIPLE_VOICES') {
+      warningMessage += 'Secondary voice or external whispering detected. Prompting by another person is prohibited.';
+    } else if (vType === 'SUSPICIOUS_GAZE') {
+      warningMessage += 'Looking away from screen repeatedly. Please keep your focus on the interview screen.';
+    } else if (vType === 'TAB_SWITCH') {
+      warningMessage += 'You left the active interview window. Tab switching is strictly prohibited.';
+    } else if (vType === 'FULLSCREEN_EXIT') {
+      warningMessage += 'Fullscreen mode exited. Please stay in full-screen during proctored evaluation.';
+    } else {
+      warningMessage += 'Prohibited action detected during the interview session.';
+    }
+
+    if (totalViolations >= VIOLATION_LIMIT) {
+      let terminationReason = `Interview Cancelled: Exceeded security violation limit (${VIOLATION_LIMIT} warnings). `;
+      if (vType === 'MULTIPLE_FACES') terminationReason += 'Multiple individuals detected assisting the candidate.';
+      else if (vType === 'FACE_NOT_DETECTED') terminationReason += 'Candidate absent from camera during proctored interview.';
+      else if (vType === 'MULTIPLE_VOICES') terminationReason += 'Unauthorized secondary voice assistance detected.';
+      else if (vType === 'TAB_SWITCH') terminationReason += 'Repeated tab-switching / browser window exit.';
+      else terminationReason += 'Prohibited anti-cheating policy violations.';
 
       await db.query(
         `UPDATE interview_sessions
          SET ${countCol} = $1,
+             proctoring_violations_count = $2,
              status = 'TERMINATED',
-             termination_reason = $2,
+             termination_reason = $3,
              terminated_at = NOW()
-         WHERE id = $3 AND user_id = $4`,
-        [newCount, terminationReason, sessionId, req.user.id]
+         WHERE id = $4 AND user_id = $5`,
+        [currentTypeCount, totalViolations, terminationReason, sessionId, req.user.id]
       );
 
       return res.json({
@@ -401,12 +445,14 @@ router.post('/violation', authenticateToken, async (req, res) => {
         terminated: true,
         status: 'TERMINATED',
         violationType: vType,
-        violationCount: newCount,
-        tab_switch_count: tabCount,
-        tabSwitchCount: tabCount,
-        clipboard_violation_count: clipCount,
-        clipboardViolationCount: clipCount,
-        limit: 2,
+        violationCount: totalViolations,
+        tab_switch_count: vType === 'TAB_SWITCH' ? currentTypeCount : (session.tab_switch_count || 0),
+        tabSwitchCount: vType === 'TAB_SWITCH' ? currentTypeCount : (session.tab_switch_count || 0),
+        clipboard_violation_count: vType === 'CLIPBOARD_ACTION' ? currentTypeCount : (session.clipboard_violation_count || 0),
+        clipboardViolationCount: vType === 'CLIPBOARD_ACTION' ? currentTypeCount : (session.clipboard_violation_count || 0),
+        face_violation_count: ['FACE_NOT_DETECTED', 'MULTIPLE_FACES', 'SUSPICIOUS_GAZE'].includes(vType) ? currentTypeCount : (session.face_violation_count || 0),
+        voice_violation_count: vType === 'MULTIPLE_VOICES' ? currentTypeCount : (session.voice_violation_count || 0),
+        limit: VIOLATION_LIMIT,
         termination_reason: terminationReason,
         terminationReason,
         terminatedAt: new Date().toISOString(),
@@ -414,25 +460,26 @@ router.post('/violation', authenticateToken, async (req, res) => {
       });
     } else {
       await db.query(
-        `UPDATE interview_sessions SET ${countCol} = $1 WHERE id = $2 AND user_id = $3`,
-        [newCount, sessionId, req.user.id]
+        `UPDATE interview_sessions 
+         SET ${countCol} = $1,
+             proctoring_violations_count = $2
+         WHERE id = $3 AND user_id = $4`,
+        [currentTypeCount, totalViolations, sessionId, req.user.id]
       );
-
-      const warningMessage = vType === 'TAB_SWITCH'
-        ? 'Warning 1 of 2: You left your active session. Switching tabs or leaving the session repeatedly may terminate your interview or coding practice.'
-        : 'Warning 1 of 2: Copying, cutting, or pasting code is not allowed during this interview session. Repeated violations will end the session.';
 
       return res.json({
         warning: true,
         terminated: false,
         status: session.status || 'ACTIVE',
         violationType: vType,
-        violationCount: newCount,
-        tab_switch_count: tabCount,
-        tabSwitchCount: tabCount,
-        clipboard_violation_count: clipCount,
-        clipboardViolationCount: clipCount,
-        limit: 2,
+        violationCount: totalViolations,
+        tab_switch_count: vType === 'TAB_SWITCH' ? currentTypeCount : (session.tab_switch_count || 0),
+        tabSwitchCount: vType === 'TAB_SWITCH' ? currentTypeCount : (session.tab_switch_count || 0),
+        clipboard_violation_count: vType === 'CLIPBOARD_ACTION' ? currentTypeCount : (session.clipboard_violation_count || 0),
+        clipboardViolationCount: vType === 'CLIPBOARD_ACTION' ? currentTypeCount : (session.clipboard_violation_count || 0),
+        face_violation_count: ['FACE_NOT_DETECTED', 'MULTIPLE_FACES', 'SUSPICIOUS_GAZE'].includes(vType) ? currentTypeCount : (session.face_violation_count || 0),
+        voice_violation_count: vType === 'MULTIPLE_VOICES' ? currentTypeCount : (session.voice_violation_count || 0),
+        limit: VIOLATION_LIMIT,
         message: warningMessage
       });
     }
