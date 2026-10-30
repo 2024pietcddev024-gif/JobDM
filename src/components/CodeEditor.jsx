@@ -5,8 +5,7 @@ import { vscodeDark } from '@uiw/codemirror-theme-vscode';
 import { python } from '@codemirror/lang-python';
 import { java } from '@codemirror/lang-java';
 import { cpp } from '@codemirror/lang-cpp';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+import { API_URL } from '../services/apiClient';
 
 const LANGUAGE_TEMPLATES = {
   Python: 'def solve(input):\n    # Write your solution here\n    pass',

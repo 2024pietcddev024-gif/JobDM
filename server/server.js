@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -17,6 +18,16 @@ validateJwtSecret({ exitOnError: !process.env.VERCEL });
 const app = express();
 const PORT = process.env.PORT || 3001;
 const HOST = process.env.HOST || '0.0.0.0';
+
+// Enterprise Security Headers
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
 
 app.use(cors({
   origin: (origin, callback) => {
@@ -58,6 +69,14 @@ import campusTutorRoutes from './routes/campusTutor.js';
 import campusTutorAnalyticsRoutes from './routes/campusTutorAnalytics.js';
 import campusHRRoutes from './routes/campusHR.js';
 import privacyRoutes from './routes/privacy.js';
+import { authRateLimiter, codeExecutionRateLimiter } from './middleware/rateLimiter.js';
+import db from './db.js';
+
+// Apply targeted rate limiters to prevent brute-force and resource exhaustion
+app.use('/api/auth/login', authRateLimiter);
+app.use('/api/auth/register', authRateLimiter);
+app.use('/api/code/run', codeExecutionRateLimiter);
+app.use('/api/code/submit', codeExecutionRateLimiter);
 
 app.use('/api/auth', authRoutes);
 app.use('/api/interviews', interviewRoutes);
@@ -72,8 +91,27 @@ app.use('/api/campus/hr', campusHRRoutes);
 app.use('/api/campus', campusRoutes);
 app.use('/api/privacy', privacyRoutes);
 
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime(), timestamp: new Date() });
+app.get('/api/health', async (req, res) => {
+  let dbStatus = 'unconfigured';
+  if (db.pool) {
+    try {
+      await db.query('SELECT 1');
+      dbStatus = 'healthy';
+    } catch (e) {
+      dbStatus = `unreachable: ${e.message}`;
+    }
+  }
+
+  res.json({
+    status: dbStatus === 'healthy' ? 'healthy' : 'degraded',
+    uptime: Math.round(process.uptime()),
+    timestamp: new Date().toISOString(),
+    services: {
+      api: 'healthy',
+      database: dbStatus,
+      piston: process.env.PISTON_URL || process.env.PISTON_API_URL || 'http://localhost:2000/api/v2'
+    }
+  });
 });
 
 // Global JSON error handler to ensure clean JSON responses on unhandled errors (never HTML error pages)
@@ -84,9 +122,22 @@ app.use((err, req, res, next) => {
   });
 });
 
-if (process.env.NODE_ENV !== 'production') {
+// Serve production SPA frontend if compiled dist directory exists on disk (Docker / Standalone node)
+const distPath = path.resolve(__dirname, '../dist');
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+  // Express 5 compatible catch-all for SPA client-side routing
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' || req.url.startsWith('/api')) return next();
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+}
+
+// Standalone server execution (Docker, Railway, VPS, Local Dev)
+// In Vercel serverless environments, Vercel directly invokes the exported app.
+if (!process.env.VERCEL && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
   app.listen(PORT, HOST, () => {
-    console.log(`Server listening on http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
+    console.log(`[JobDM] Server listening on http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
   });
 }
 

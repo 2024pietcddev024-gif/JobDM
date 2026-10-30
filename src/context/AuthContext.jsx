@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { API_URL, extractErrorMessage } from '../services/apiClient';
 
 const AuthContext = createContext(null);
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
@@ -63,6 +63,14 @@ export const AuthProvider = ({ children }) => {
       setLoading(false);
     };
     checkAuth();
+
+    const handleSessionExpired = () => {
+      localStorage.removeItem('interviewiq_token');
+      setUser(null);
+      setIsAuthenticated(false);
+    };
+    window.addEventListener('jobdm:session_expired', handleSessionExpired);
+    return () => window.removeEventListener('jobdm:session_expired', handleSessionExpired);
   }, []);
 
   const login = async (email, password, expectedRole = null, collegeCode = null) => {
@@ -102,7 +110,7 @@ export const AuthProvider = ({ children }) => {
           error: text && !text.includes('<!DOCTYPE') && !text.includes('<html')
             ? text
             : (res.status >= 500
-                ? 'Backend service is unreachable. Please make sure the backend server is running on port 3001.'
+                ? 'Backend service is unreachable. Please verify your connection or check that the backend server is running.'
                 : `Authentication failed (${res.status}). Please check your credentials.`)
         };
       }
@@ -136,7 +144,7 @@ export const AuthProvider = ({ children }) => {
       console.error(err);
       let errorMessage = err.message;
       if (err.message === 'Failed to fetch') {
-        errorMessage = 'Unable to connect to the server. Make sure the backend is running on port 3001.';
+        errorMessage = 'Unable to connect to the backend server. Please verify your connection or check that the server is running.';
       }
       return { success: false, error: errorMessage };
     }
@@ -179,7 +187,7 @@ export const AuthProvider = ({ children }) => {
           error: text && !text.includes('<!DOCTYPE') && !text.includes('<html')
             ? text
             : (res.status >= 500
-                ? 'Backend service is unreachable. Please make sure the backend server is running on port 3001.'
+                ? 'Backend service is unreachable. Please verify your connection or check that the backend server is running.'
                 : `Authentication failed (${res.status}). Please check your credentials.`)
         };
       }
@@ -219,7 +227,7 @@ export const AuthProvider = ({ children }) => {
       console.error(err);
       let errorMessage = err.message;
       if (err.message === 'Failed to fetch') {
-        errorMessage = 'Unable to connect to the server. Make sure the backend is running on port 3001.';
+        errorMessage = 'Unable to connect to the backend server. Please verify your connection or check that the server is running.';
       }
       return { success: false, error: errorMessage };
     }

@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import { API_URL } from '../services/apiClient';
 
 const InterviewContext = createContext(null);
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
 async function safeJson(res) {
   const text = await res.text();

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, lazy, Suspense } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { InterviewProvider } from './context/InterviewContext';
 import { AptitudeProvider } from './context/AptitudeContext';
@@ -7,27 +7,37 @@ import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import AuthModal from './components/AuthModal';
 
-import Dashboard from './pages/Dashboard';
-import NewInterview from './pages/NewInterview';
-import InterviewSession from './pages/InterviewSession';
-import InterviewReport from './pages/InterviewReport';
-import History from './pages/History';
-import CodingSandbox from './pages/CodingSandbox';
-import Leaderboard from './pages/Leaderboard';
-import Profile from './pages/Profile';
-import Aptitude from './pages/Aptitude';
-import AptitudeSetup from './pages/AptitudeSetup';
-import AptitudeQuiz from './pages/AptitudeQuiz';
-import AptitudeResult from './pages/AptitudeResult';
-import RegistrarDashboard from './pages/RegistrarDashboard';
-import CollegeAdminDashboard from './pages/CollegeAdminDashboard';
-import TutorDashboard from './pages/TutorDashboard';
-import HRDashboard from './pages/HRDashboard';
-import LandingPage from './pages/LandingPage';
-import UnifiedAuth from './pages/UnifiedAuth';
-import StudentJobs from './pages/StudentJobs';
+// Code-split route-level components for optimal First Contentful Paint (FCP)
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const NewInterview = lazy(() => import('./pages/NewInterview'));
+const InterviewSession = lazy(() => import('./pages/InterviewSession'));
+const InterviewReport = lazy(() => import('./pages/InterviewReport'));
+const History = lazy(() => import('./pages/History'));
+const CodingSandbox = lazy(() => import('./pages/CodingSandbox'));
+const Leaderboard = lazy(() => import('./pages/Leaderboard'));
+const Profile = lazy(() => import('./pages/Profile'));
+const Aptitude = lazy(() => import('./pages/Aptitude'));
+const AptitudeSetup = lazy(() => import('./pages/AptitudeSetup'));
+const AptitudeQuiz = lazy(() => import('./pages/AptitudeQuiz'));
+const AptitudeResult = lazy(() => import('./pages/AptitudeResult'));
+const RegistrarDashboard = lazy(() => import('./pages/RegistrarDashboard'));
+const CollegeAdminDashboard = lazy(() => import('./pages/CollegeAdminDashboard'));
+const TutorDashboard = lazy(() => import('./pages/TutorDashboard'));
+const HRDashboard = lazy(() => import('./pages/HRDashboard'));
+const LandingPage = lazy(() => import('./pages/LandingPage'));
+const UnifiedAuth = lazy(() => import('./pages/UnifiedAuth'));
+const StudentJobs = lazy(() => import('./pages/StudentJobs'));
 
-import { ShieldAlert } from 'lucide-react';
+import { ShieldAlert, Loader2 } from 'lucide-react';
+
+function RouteLoader() {
+  return (
+    <div className="min-h-[50vh] flex flex-col items-center justify-center space-y-3 animate-in fade-in duration-200">
+      <Loader2 className="w-8 h-8 text-indigo-600 dark:text-indigo-400 animate-spin" />
+      <p className="text-xs font-semibold text-slate-500 tracking-wide uppercase">Loading Interface...</p>
+    </div>
+  );
+}
 
 export const getDashboardForRole = (role) => {
   switch (role) {
@@ -265,7 +275,9 @@ export function AppContent() {
         )}
 
         <main className={`flex-1 ${isAuthRoute ? '' : 'p-4 lg:p-8 max-w-7xl mx-auto'} w-full`}>
-          {renderPage()}
+          <Suspense fallback={<RouteLoader />}>
+            {renderPage()}
+          </Suspense>
         </main>
       </div>
 

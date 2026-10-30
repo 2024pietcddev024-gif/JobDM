@@ -5,8 +5,7 @@ import {
   Brain, Calculator, BookOpen, Code, Network, Cpu, Globe, Database, 
   Wifi, Binary, Layers, Terminal, ChevronRight, Loader2, AlertCircle, TrendingUp
 } from 'lucide-react';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+import { API_URL } from '../services/apiClient';
 
 const ICONS = {
   Brain, Calculator, BookOpen, Code, Network, Cpu, Globe, Database, Wifi, Binary, Layers, Terminal

@@ -5,8 +5,7 @@ import {
   UserPlus, RefreshCw, GraduationCap, Search, X 
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+import { API_URL } from '../services/apiClient';
 
 const fetchApi = async (path, method = 'GET', body = null) => {
   const token = localStorage.getItem('interviewiq_token');

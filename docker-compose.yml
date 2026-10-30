@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  # ── JobDM Application (Frontend + Express API) ─────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: jobdm_app
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - HOST=0.0.0.0
+      - NODE_ENV=production
+      - DATABASE_URL=${DATABASE_URL}
+      - JWT_SECRET=${JWT_SECRET}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - PISTON_URL=http://piston:2000/api/v2
+    depends_on:
+      piston:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - jobdm_network
+
+  # ── Piston Code Execution Sandbox Engine ───────────────────────────────────
+  piston:
+    image: ghcr.io/engineer-man/piston:latest
+    container_name: jobdm_piston
+    ports:
+      - "2000:2000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2000/api/v2/runtimes"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - jobdm_network
+
+networks:
+  jobdm_network:
+    driver: bridge

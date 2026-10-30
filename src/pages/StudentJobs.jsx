@@ -6,8 +6,7 @@ import {
   HelpCircle, Info, Target, Award, CheckCircle2, ShieldAlert
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+import { API_URL } from '../services/apiClient';
 
 export default function StudentJobs({ onNavigate }) {
   const { user } = useAuth();

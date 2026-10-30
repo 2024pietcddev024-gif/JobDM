@@ -1,6 +1,5 @@
 import { SAMPLE_QUESTIONS_BANK } from '../mock/mockData';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+import { API_URL } from './apiClient';
 const GEMINI_API_KEY_STORAGE = 'interviewiq_gemini_api_key';
 
 // Automatically clean up any legacy client-side API keys to protect user credentials

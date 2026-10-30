@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useInterview } from '../context/InterviewContext';
 import { History as HistoryIcon, Search, Calendar, Clock, ChevronRight, ShieldAlert, CheckCircle2, Code, AlertTriangle } from 'lucide-react';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+import { API_URL } from '../services/apiClient';
 
 export default function History({ onNavigate, onSelectSessionReport }) {
   const { pastSessions } = useInterview();

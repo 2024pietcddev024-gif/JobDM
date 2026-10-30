@@ -2,8 +2,7 @@ import React, { useState, useEffect } from 'react';
 import CodeEditor from '../components/CodeEditor';
 import { Code, Sparkles, CheckCircle2, Search, BookOpen, ChevronDown, List, ChevronRight, MessageSquare, AlertTriangle, Lightbulb, BarChart2, Calendar, Copy, Target, ShieldAlert, X } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+import { API_URL } from '../services/apiClient';
 
 // Normalize a DB row (snake_case) to the shape the UI expects (camelCase)
 function normalizeDbProblem(row) {

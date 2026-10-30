@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useInterview } from '../context/InterviewContext';
 import { Award, Flame, ShieldCheck, Mic, Code, Trophy, Star, Crown, Lock, Loader2, AlertCircle } from 'lucide-react';
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+import { API_URL } from '../services/apiClient';
 const BADGE_ICONS = { Flame, ShieldCheck, Mic, Code };
 
 export default function Leaderboard({ onNavigate }) {

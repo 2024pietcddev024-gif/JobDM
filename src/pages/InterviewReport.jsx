@@ -6,6 +6,7 @@ import {
   Sparkles, MessageSquare, Mic, BookOpen, ChevronDown, ChevronUp,
   Target, TrendingUp, AlertTriangle, SkipForward, ThumbsUp, ShieldCheck, ShieldAlert
 } from 'lucide-react';
+import { API_URL } from '../services/apiClient';
 
 function ScoreBadge({ score }) {
   const s = parseFloat(score);
@@ -105,7 +106,6 @@ export default function InterviewReport({ onNavigate }) {
     setAppealSuccess('');
     try {
       const token = localStorage.getItem('interviewiq_token');
-      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
       const res = await fetch(`${API_URL}/interviews/session/${session.id}/appeal`, {
         method: 'POST',
         headers: {

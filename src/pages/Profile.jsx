@@ -6,8 +6,7 @@ import {
   AlertCircle, Lock, Eye, EyeOff, Code, GraduationCap, 
   Building2, CheckCircle2, ShieldCheck, RefreshCw, Send
 } from 'lucide-react';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+import { API_URL } from '../services/apiClient';
 
 const PROGRAMMING_LANGUAGES = [
   { id: 'python', name: 'Python' },

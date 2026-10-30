@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import { useAptitude } from '../context/AptitudeContext';
 import { ArrowLeft, Play, LayoutGrid, Target, Brain, AlertCircle } from 'lucide-react';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+import { API_URL } from '../services/apiClient';
 
 export default function AptitudeSetup({ onNavigate }) {
   const { selectedCategory, setSessionParams, setCurrentSessionId, setQuestions } = useAptitude();
