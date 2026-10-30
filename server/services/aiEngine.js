@@ -791,14 +791,17 @@ export async function simulateCodeExecution({ language, code, testCases, problem
 
   let res;
   try {
-    // using global fetch for node > 18
-    res = await fetch(process.env.PISTON_URL || 'http://localhost:2000/api/v2/execute', {
+    const rawUrl = process.env.PISTON_URL || process.env.PISTON_API_URL || 'http://localhost:2000/api/v2/execute';
+    const cleanUrl = rawUrl.replace(/\/+$/, '');
+    const executeUrl = cleanUrl.endsWith('/execute') ? cleanUrl : `${cleanUrl}/execute`;
+
+    res = await fetch(executeUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
   } catch(e) {
-    return { status: 'error', compileError: 'Failed to connect to execution engine.' };
+    return { status: 'error', compileError: 'Failed to connect to code execution engine: ' + (e.message || 'Host unreachable') };
   }
   
   const data = await res.json();

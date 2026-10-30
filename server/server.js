@@ -11,8 +11,8 @@ dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 import { validateJwtSecret } from './config/jwt.js';
 
-// Enforce environment validation on application startup
-validateJwtSecret();
+// Enforce environment validation on application startup (avoid hard process.exit in serverless environments)
+validateJwtSecret({ exitOnError: !process.env.VERCEL });
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -24,15 +24,25 @@ app.use(cors({
     if (!origin || process.env.NODE_ENV !== 'production') {
       return callback(null, true);
     }
-    // In production, validate against allowed domains and loopback origins
-    const allowed = ['http://localhost:5173', 'http://127.0.0.1:5173'];
-    if (allowed.includes(origin) || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+    // In production, validate against allowed domains, Vercel deployments, and loopback origins
+    const allowed = ['http://localhost:5173', 'http://127.0.0.1:5173', process.env.FRONTEND_URL].filter(Boolean);
+    const isVercel = origin && (origin.endsWith('.vercel.app') || origin.includes('vercel.app'));
+    if (allowed.includes(origin) || isVercel || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
       return callback(null, true);
     }
     return callback(null, false);
   },
   credentials: true
 }));
+
+// Ensure compatibility with Vercel serverless function rewrites where /api may be stripped
+app.use((req, res, next) => {
+  if (req.url && !req.url.startsWith('/api') && !req.url.startsWith('/health')) {
+    req.url = '/api' + req.url;
+  }
+  next();
+});
+
 app.use(express.json({ limit: '10mb' }));
 
 // Routes will be added here
